@@ -246,10 +246,9 @@ jobs:
     - name: Upload release artifacts
       if: env.RELEASE == 'true'
       run: |
-        gh release upload \
-          $RELEASE_TAG \
-          build_scripts/final_installer/*.deb \
-          build_scripts/final_installer/*.deb.torrent
+        gh release upload $RELEASE_TAG build_scripts/final_installer/*.deb build_scripts/final_installer/*.deb.torrent
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Mark installer complete
       if: steps.check_secrets.outputs.HAS_SECRET && env.FULL_RELEASE == 'true'
