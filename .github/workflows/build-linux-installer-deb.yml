@@ -246,7 +246,9 @@ jobs:
     - name: Upload release artifacts
       if: env.RELEASE == 'true'
       run: |
-        gh release upload $RELEASE_TAG build_scripts/final_installer/*.deb build_scripts/final_installer/*.deb.torrent
+        which gh
+        gh release upload $RELEASE_TAG build_scripts/final_installer/*.deb
+        gh release upload $RELEASE_TAG build_scripts/final_installer/*.deb.torrent
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
