@@ -125,7 +125,7 @@ jobs:
       id: version_number
       shell: bash
       run: |
-        python -m venv ..\\venv
+        python -m venv ../venv
         ..\\venv\\Scripts\\Activate.ps1
         pip3 install setuptools_scm
         CHIA_INSTALLER_VERSION=$(python .\\build_scripts\\installer-version.py)
