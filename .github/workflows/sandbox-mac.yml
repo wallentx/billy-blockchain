@@ -45,7 +45,7 @@ jobs:
           elif [ -x "$(command -v pacman)" ]; then
               sudo pacman -S --needed --noconfirm $packagesNeeded
           elif [ -x "$(command -v brew)" ]; then
-              yes | sudo brew install $packagesNeeded
+              brew install $packagesNeeded
           elif [ -x "$(command -v chocolatey)" ]; then
               choco install -y $packagesNeeded
           else
