@@ -1,4 +1,4 @@
-name: ⛱️🕹️ Sandbox Test
+name: ⛱️🕹️ Sandbox Windows Test 1
 
 on:
   workflow_dispatch:

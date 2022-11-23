@@ -1,4 +1,4 @@
-name: ⛱️🕹️ Sandbox Test
+name: ⛱️🕹️ Sandbobox Linux Test
 
 on:
   workflow_dispatch:

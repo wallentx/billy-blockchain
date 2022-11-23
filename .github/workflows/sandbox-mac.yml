@@ -1,4 +1,4 @@
-name: ⛱️🕹️ Sandbox Test
+name: ⛱️🕹️ Sandbox Mac Test
 
 on:
   workflow_dispatch:
