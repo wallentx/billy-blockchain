@@ -34,17 +34,17 @@ jobs:
         run: |
           packagesNeeded='curl jq'
           if [ -x "$(command -v apk)" ]; then
-              apk add --no-cache $packagesNeeded
+              sudo apk add --no-cache $packagesNeeded
           elif [ -x "$(command -v apt-get)" ]; then
-              apt-get update && apt-get install -y $packagesNeeded
+              sudo apt-get update && sudo apt-get install -y $packagesNeeded
           elif [ -x "$(command -v dnf)" ]; then
-              dnf install -y $packagesNeeded
+              sudo dnf install -y $packagesNeeded
           elif [ -x "$(command -v zypper)" ]; then
-              zypper install -n $packagesNeeded
+              sudo zypper install -n $packagesNeeded
           elif [ -x "$(command -v pacman)" ]; then
-              pacman -S --needed --noconfirm $packagesNeeded
+              sudo pacman -S --needed --noconfirm $packagesNeeded
           elif [ -x "$(command -v brew)" ]; then
-              yes | brew install $packagesNeeded
+              yes | sudo brew install $packagesNeeded
           elif [ -x "$(command -v chocolatey)" ]; then
               choco install -y $packagesNeeded
           else
