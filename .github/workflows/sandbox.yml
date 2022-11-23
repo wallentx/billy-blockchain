@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Install Things
         run: |
-          packagesNeeded='curl jq'
+          packagesNeeded='geekbench'
           if [ -x "$(command -v apk)" ]; then
               sudo apk add --no-cache $packagesNeeded
           elif [ -x "$(command -v apt-get)" ]; then
