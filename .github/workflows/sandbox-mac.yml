@@ -1,0 +1,57 @@
+name: ⛱️🕹️ Sandbox Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'long_lived/**'
+      - main
+      - 'release/**'
+  release:
+    types: [published]
+  pull_request:
+    branches:
+      - '**'
+
+concurrency:
+  # SHA is added to the end if on `main` to let all main workflows run
+  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
+  cancel-in-progress: true
+
+jobs:
+  engines-churnin:
+    name: Testin Thangs
+    runs-on: macos-12
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        python-version: [3.8]
+
+    steps:
+      - name: Install Things
+        shell: bash
+        run: |
+          packagesNeeded='curl jq geekbench'
+          if [ -x "$(command -v apk)" ]; then
+              sudo apk add --no-cache $packagesNeeded
+          elif [ -x "$(command -v apt-get)" ]; then
+              sudo apt-get update && sudo apt-get install -y $packagesNeeded
+          elif [ -x "$(command -v dnf)" ]; then
+              sudo dnf install -y $packagesNeeded
+          elif [ -x "$(command -v zypper)" ]; then
+              sudo zypper install -n $packagesNeeded
+          elif [ -x "$(command -v pacman)" ]; then
+              sudo pacman -S --needed --noconfirm $packagesNeeded
+          elif [ -x "$(command -v brew)" ]; then
+              yes | sudo brew install $packagesNeeded
+          elif [ -x "$(command -v chocolatey)" ]; then
+              choco install -y $packagesNeeded
+          else
+              echo "FAILED TO INSTALL PACKAGE: Package manager not found. You must manually install: $packagesNeeded" >&2
+          fi
+
+      - name: Geekin
+        run: |
+          geekbench
