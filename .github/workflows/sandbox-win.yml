@@ -49,4 +49,4 @@ jobs:
 
       - name: Geekin
         run: |
-          geekbench5
+          C:\Program Files (x86)\Geekbench 5\geekbench5.exe
