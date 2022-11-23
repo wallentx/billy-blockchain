@@ -6,7 +6,6 @@ on:
     branches:
       - 'long_lived/**'
       - main
-      - sandbox
       - 'release/**'
   release:
     types: [published]
@@ -20,10 +19,9 @@ concurrency:
   cancel-in-progress: true
   
 jobs:
-  build:
-    name: Linux amd64 DEB Installer
+  engines-churnin:
+    name: Testin Thangs
     runs-on: ubuntu-latest
-    container: chianetwork/ubuntu-18.04-builder:latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -36,19 +34,19 @@ jobs:
         run: |
           packagesNeeded='curl jq'
           if [ -x "$(command -v apk)" ]; then
-              apk add --no-cache "$packagesNeeded"
+              apk add --no-cache $packagesNeeded
           elif [ -x "$(command -v apt-get)" ]; then
-              apt-get update && apt-get install -y "$packagesNeeded"
+              apt-get update && apt-get install -y $packagesNeeded
           elif [ -x "$(command -v dnf)" ]; then
-              dnf install -y "$packagesNeeded"
+              dnf install -y $packagesNeeded
           elif [ -x "$(command -v zypper)" ]; then
-              zypper install -n "$packagesNeeded"
+              zypper install -n $packagesNeeded
           elif [ -x "$(command -v pacman)" ]; then
-              pacman -S --needed --noconfirm "$packagesNeeded"
+              pacman -S --needed --noconfirm $packagesNeeded
           elif [ -x "$(command -v brew)" ]; then
-              yes | brew install "$packagesNeeded"
+              yes | brew install $packagesNeeded
           elif [ -x "$(command -v chocolatey)" ]; then
-              choco install -y "$packagesNeeded"
+              choco install -y $packagesNeeded
           else
               echo "FAILED TO INSTALL PACKAGE: Package manager not found. You must manually install: $packagesNeeded" >&2
           fi
