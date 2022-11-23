@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Install Things
         run: |
-          packagesNeeded='geekbench'
+          packagesNeeded='curl jq'
           if [ -x "$(command -v apk)" ]; then
               sudo apk add --no-cache $packagesNeeded
           elif [ -x "$(command -v apt-get)" ]; then
@@ -50,3 +50,9 @@ jobs:
           else
               echo "FAILED TO INSTALL PACKAGE: Package manager not found. You must manually install: $packagesNeeded" >&2
           fi
+
+      - name: Geekin
+        run: |
+          curl -o geekbench.tar.gz https://cdn.geekbench.com/Geekbench-5.4.5-Linux.tar.gz
+          tar -xvf geekbench.tar.gz
+          ./Geekbench-5.4.5-Linux/geekbench5
