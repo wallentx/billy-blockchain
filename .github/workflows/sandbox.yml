@@ -17,7 +17,7 @@ concurrency:
   # SHA is added to the end if on `main` to let all main workflows run
   group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
   cancel-in-progress: true
-  
+
 jobs:
   engines-churnin:
     name: Testin Thangs
@@ -51,8 +51,6 @@ jobs:
               echo "FAILED TO INSTALL PACKAGE: Package manager not found. You must manually install: $packagesNeeded" >&2
           fi
 
-      - name: Geekin
+      - name: Use Tools
         run: |
-          curl -o geekbench.tar.gz https://cdn.geekbench.com/Geekbench-5.4.5-Linux.tar.gz
-          tar -xvf geekbench.tar.gz
-          ./Geekbench-5.4.5-Linux/geekbench5
+          curl -s https://www.githubstatus.com/api/v2/status.json | jq -r '.status.description'

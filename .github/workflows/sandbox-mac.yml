@@ -33,7 +33,7 @@ jobs:
       - name: Install Things
         shell: bash
         run: |
-          packagesNeeded='curl jq geekbench'
+          packagesNeeded='curl jq'
           if [ -x "$(command -v apk)" ]; then
               sudo apk add --no-cache $packagesNeeded
           elif [ -x "$(command -v apt-get)" ]; then
@@ -52,6 +52,6 @@ jobs:
               echo "FAILED TO INSTALL PACKAGE: Package manager not found. You must manually install: $packagesNeeded" >&2
           fi
 
-      - name: Geekin
+      - name: Use Tools
         run: |
-          geekbench5
+          curl -s https://www.githubstatus.com/api/v2/status.json | jq -r '.status.description'
