@@ -387,7 +387,6 @@ class TestPeerManager:
         buckets = []
         for i in range(4 * 255):
             src = PeerInfo("251.4.1.1", 8444)
-            peer = PeerInfo(str(250 + i // 255) + "." + str(i % 256) + ".1.1", 8444)
             t_peer = TimestampedPeerInfo(str(250 + i // 255) + "." + str(i % 256) + ".1.1", 8444, 0)
             extended_peer_info = ExtendedPeerInfo(t_peer, src)
             bucket = extended_peer_info.get_new_bucket(key1)
@@ -400,7 +399,6 @@ class TestPeerManager:
         buckets = []
         for i in range(255):
             src = PeerInfo("250." + str(i) + ".1.1", 8444)
-            peer = PeerInfo("250.1.1.1", 8444)
             t_peer = TimestampedPeerInfo("250.1.1.1", 8444, 0)
             extended_peer_info = ExtendedPeerInfo(t_peer, src)
             bucket = extended_peer_info.get_new_bucket(key1)
@@ -585,6 +583,6 @@ class TestPeerManager:
         await addrman.mark_good(PeerInfo("250.250.2.2", 9999))
         assert await addrman.size() == 2
         for _ in range(5):
-            await addrman.attempt(peer1, True, time.time() - 61)
+            await addrman.attempt(PeerInfo(peer1.host, peer1.port), True, time.time() - 61)
         addrman.cleanup(7 * 3600 * 24, 5)
         assert await addrman.size() == 1

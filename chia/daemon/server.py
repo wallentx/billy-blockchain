@@ -13,9 +13,12 @@ import time
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TextIO, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Set, TextIO, Tuple
+
+from typing_extensions import Protocol
 
 from chia import __version__
 from chia.cmds.init_funcs import check_keys, chia_full_version_str, chia_init
@@ -24,8 +27,7 @@ from chia.daemon.keychain_server import KeychainServer, keychain_commands
 from chia.daemon.windows_signal import kill
 from chia.plotters.plotters import get_available_plotters
 from chia.plotting.util import add_plot_directory
-from chia.server.server import ssl_context_for_root, ssl_context_for_server
-from chia.ssl.create_ssl import get_mozilla_ca_crt
+from chia.server.server import ssl_context_for_server
 from chia.util.beta_metrics import BetaMetricsLogger
 from chia.util.chia_logging import initialize_service_logging
 from chia.util.config import load_config
@@ -41,7 +43,7 @@ from chia.util.ws_message import WsRpcMessage, create_payload, format_response
 io_pool_exc = ThreadPoolExecutor()
 
 try:
-    from aiohttp import ClientSession, WSMsgType, web
+    from aiohttp import WSMsgType, web
     from aiohttp.web_ws import WebSocketResponse
 except ModuleNotFoundError:
     print("Error: Make sure to run . ./activate from the project folder before starting Chia.")
@@ -51,21 +53,6 @@ except ModuleNotFoundError:
 log = logging.getLogger(__name__)
 
 service_plotter = "chia_plotter"
-
-
-async def fetch(url: str):
-    async with ClientSession() as session:
-        try:
-            mozilla_root = get_mozilla_ca_crt()
-            ssl_context = ssl_context_for_root(mozilla_root, log=log)
-            response = await session.get(url, ssl=ssl_context)
-            if not response.ok:
-                log.warning("Response not OK.")
-                return None
-            return await response.text()
-        except Exception as e:
-            log.error(f"Exception while fetching {url}, exception: {e}")
-            return None
 
 
 class PlotState(str, Enum):
@@ -120,6 +107,11 @@ async def ping() -> Dict[str, Any]:
     return response
 
 
+class Command(Protocol):
+    async def __call__(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
+        ...
+
+
 class WebSocketServer:
     def __init__(
         self,
@@ -128,27 +120,27 @@ class WebSocketServer:
         ca_key_path: Path,
         crt_path: Path,
         key_path: Path,
-        shutdown_event: asyncio.Event,
         run_check_keys_on_unlock: bool = False,
     ):
         self.root_path = root_path
         self.log = log
-        self.services: Dict = dict()
+        self.services: Dict[str, List[subprocess.Popen]] = dict()
         self.plots_queue: List[Dict] = []
-        self.connections: Dict[str, List[WebSocketResponse]] = dict()  # service_name : [WebSocket]
-        self.remote_address_map: Dict[WebSocketResponse, str] = dict()  # socket: service_name
+        self.connections: Dict[str, Set[WebSocketResponse]] = dict()  # service name : {WebSocketResponse}
         self.ping_job: Optional[asyncio.Task] = None
         self.net_config = load_config(root_path, "config.yaml")
         self.self_hostname = self.net_config["self_hostname"]
         self.daemon_port = self.net_config["daemon_port"]
         self.daemon_max_message_size = self.net_config.get("daemon_max_message_size", 50 * 1000 * 1000)
+        self.heartbeat = self.net_config.get("daemon_heartbeat", 300)
         self.webserver: Optional[WebServer] = None
         self.ssl_context = ssl_context_for_server(ca_crt_path, ca_key_path, crt_path, key_path, log=self.log)
         self.keychain_server = KeychainServer()
         self.run_check_keys_on_unlock = run_check_keys_on_unlock
-        self.shutdown_event = shutdown_event
+        self.shutdown_event = asyncio.Event()
 
-    async def start(self) -> None:
+    @asynccontextmanager
+    async def run(self) -> AsyncIterator[None]:
         self.log.info("Starting Daemon Server")
 
         # Note: the minimum_version has been already set to TLSv1_2
@@ -179,6 +171,12 @@ class WebSocketServer:
             ssl_context=self.ssl_context,
             logger=self.log,
         )
+        try:
+            yield
+        finally:
+            if not self.shutdown_event.is_set():
+                await self.stop()
+            await self.exit()
 
     async def setup_process_global_state(self) -> None:
         try:
@@ -203,6 +201,9 @@ class WebSocketServer:
             except Exception as e:
                 self.log.error(f"Error while canceling task.{e} {task}")
 
+    async def stop_command(self, websocket: WebSocketResponse, request: Dict[str, Any] = {}) -> Dict[str, Any]:
+        return await self.stop()
+
     async def stop(self) -> Dict[str, Any]:
         self.cancel_task_safe(self.ping_job)
         service_names = list(self.services.keys())
@@ -212,90 +213,119 @@ class WebSocketServer:
         if stop_service_jobs:
             await asyncio.wait(stop_service_jobs)
         self.services.clear()
-        asyncio.create_task(self.exit())
+        self.shutdown_event.set()
         log.info(f"Daemon Server stopping, Services stopped: {service_names}")
         return {"success": True, "services_stopped": service_names}
 
-    async def incoming_connection(self, request):
-        ws: WebSocketResponse = web.WebSocketResponse(max_msg_size=self.daemon_max_message_size, heartbeat=30)
+    async def incoming_connection(self, request: web.Request) -> web.StreamResponse:
+        ws: WebSocketResponse = web.WebSocketResponse(
+            max_msg_size=self.daemon_max_message_size, heartbeat=self.heartbeat
+        )
         await ws.prepare(request)
 
         while True:
             msg = await ws.receive()
             self.log.debug("Received message: %s", msg)
+            decoded: WsRpcMessage = {
+                "command": "",
+                "ack": False,
+                "data": {},
+                "request_id": "",
+                "destination": "",
+                "origin": "",
+            }
             if msg.type == WSMsgType.TEXT:
                 try:
                     decoded = json.loads(msg.data)
                     if "data" not in decoded:
                         decoded["data"] = {}
-                    response, sockets_to_use = await self.handle_message(ws, decoded)
+
+                    maybe_response = await self.handle_message(ws, decoded)
+                    if maybe_response is None:
+                        continue
+
+                    response, connections = maybe_response
+
                 except Exception as e:
                     tb = traceback.format_exc()
                     self.log.error(f"Error while handling message: {tb}")
                     error = {"success": False, "error": f"{e}"}
                     response = format_response(decoded, error)
-                    sockets_to_use = []
-                if len(sockets_to_use) > 0:
-                    for socket in sockets_to_use:
-                        try:
-                            await socket.send_str(response)
-                        except Exception as e:
-                            tb = traceback.format_exc()
-                            self.log.error(f"Unexpected exception trying to send to websocket: {e} {tb}")
-                            self.remove_connection(socket)
-                            await socket.close()
-            else:
-                service_name = "Unknown"
-                if ws in self.remote_address_map:
-                    service_name = self.remote_address_map[ws]
-                if msg.type == WSMsgType.CLOSE:
-                    self.log.info(f"ConnectionClosed. Closing websocket with {service_name}")
-                elif msg.type == WSMsgType.ERROR:
-                    self.log.info(f"Websocket exception. Closing websocket with {service_name}. {ws.exception()}")
+                    connections = {ws}  # send error back to the sender
 
-                self.remove_connection(ws)
+                await self.send_all_responses(connections, response)
+            else:
+                service_names = self.remove_connection(ws)
+
+                if len(service_names) == 0:
+                    service_names = ["Unknown"]
+
+                if msg.type == WSMsgType.CLOSE:
+                    self.log.info(f"ConnectionClosed. Closing websocket with {service_names}")
+                elif msg.type == WSMsgType.ERROR:
+                    self.log.info(f"Websocket exception. Closing websocket with {service_names}. {ws.exception()}")
+                else:
+                    self.log.info(f"Unexpected message type. Closing websocket with {service_names}. {msg.type}")
+
                 await ws.close()
                 break
 
-    def remove_connection(self, websocket: WebSocketResponse):
-        service_name = None
-        if websocket in self.remote_address_map:
-            service_name = self.remote_address_map[websocket]
-            self.remote_address_map.pop(websocket)
-        if service_name in self.connections:
-            after_removal = []
-            for connection in self.connections[service_name]:
-                if connection == websocket:
-                    continue
+        return ws
+
+    async def send_all_responses(self, connections: Set[WebSocketResponse], response: str) -> None:
+        for connection in connections.copy():
+            try:
+                await connection.send_str(response)
+            except Exception as e:
+                service_names = self.remove_connection(connection)
+                if len(service_names) == 0:
+                    service_names = ["Unknown"]
+
+                if isinstance(e, ConnectionResetError):
+                    self.log.info(f"Peer disconnected. Closing websocket with {service_names}")
                 else:
-                    after_removal.append(connection)
-            self.connections[service_name] = after_removal
+                    tb = traceback.format_exc()
+                    self.log.error(f"Unexpected exception trying to send to {service_names} (websocket: {e} {tb})")
+                    self.log.info(f"Closing websocket with {service_names}")
+
+                await connection.close()
+
+    def remove_connection(self, websocket: WebSocketResponse) -> List[str]:
+        """Returns a list of service names from which the connection was removed"""
+        service_names = []
+        for service_name, connections in self.connections.items():
+            try:
+                connections.remove(websocket)
+            except KeyError:
+                continue
+            service_names.append(service_name)
+        return service_names
 
     async def ping_task(self) -> None:
         restart = True
         await asyncio.sleep(30)
-        for remote_address, service_name in self.remote_address_map.items():
-            if service_name in self.connections:
-                sockets = self.connections[service_name]
-                for socket in sockets:
-                    try:
-                        self.log.debug(f"About to ping: {service_name}")
-                        await socket.ping()
-                    except asyncio.CancelledError:
-                        self.log.warning("Ping task received Cancel")
-                        restart = False
-                        break
-                    except Exception:
-                        self.log.exception("Ping error")
-                        self.log.error("Ping failed, connection closed.")
-                        self.remove_connection(socket)
-                        await socket.close()
+        for service_name, connections in self.connections.items():
+            if service_name == service_plotter:
+                continue
+            for connection in connections.copy():
+                try:
+                    self.log.debug(f"About to ping: {service_name}")
+                    await connection.ping()
+                except asyncio.CancelledError:
+                    self.log.warning("Ping task received Cancel")
+                    restart = False
+                    break
+                except Exception:
+                    self.log.exception(f"Ping error to {service_name}")
+                    self.log.error(f"Ping failed, connection closed to {service_name}.")
+                    self.remove_connection(connection)
+                    await connection.close()
         if restart is True:
             self.ping_job = asyncio.create_task(self.ping_task())
 
     async def handle_message(
         self, websocket: WebSocketResponse, message: WsRpcMessage
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Optional[Tuple[str, Set[WebSocketResponse]]]:
         """
         This function gets called when new message is received via websocket.
         """
@@ -307,7 +337,7 @@ class WebSocketServer:
                 sockets = self.connections[destination]
                 return dict_to_json_str(message), sockets
 
-            return None, []
+            return None
 
         data = message["data"]
         commands_with_data = [
@@ -325,51 +355,48 @@ class WebSocketServer:
             response = await self.keychain_server.handle_command(command, data)
         elif command == "ping":
             response = await ping()
-        elif command == "start_service":
-            response = await self.start_service(data)
-        elif command == "start_plotting":
-            response = await self.start_plotting(data)
-        elif command == "stop_plotting":
-            response = await self.stop_plotting(data)
-        elif command == "stop_service":
-            response = await self.stop_service(data)
-        elif command == "running_services":
-            response = await self.running_services(data)
-        elif command == "is_running":
-            response = await self.is_running(data)
-        elif command == "is_keyring_locked":
-            response = await self.is_keyring_locked()
-        elif command == "keyring_status":
-            response = await self.keyring_status()
-        elif command == "unlock_keyring":
-            response = await self.unlock_keyring(data)
-        elif command == "validate_keyring_passphrase":
-            response = await self.validate_keyring_passphrase(data)
-        elif command == "set_keyring_passphrase":
-            response = await self.set_keyring_passphrase(data)
-        elif command == "remove_keyring_passphrase":
-            response = await self.remove_keyring_passphrase(data)
-        elif command == "exit":
-            response = await self.stop()
-        elif command == "register_service":
-            response = await self.register_service(websocket, data)
-        elif command == "get_status":
-            response = self.get_status()
-        elif command == "get_version":
-            response = self.get_version()
-        elif command == "get_plotters":
-            response = await self.get_plotters()
         else:
-            self.log.error(f"UK>> {message}")
-            response = {"success": False, "error": f"unknown_command {command}"}
+            command_mapping = await self.get_command_mapping()
+            if command in command_mapping:
+                response = await command_mapping[command](websocket=websocket, request=data)
+            else:
+                self.log.error(f"UK>> {message}")
+                response = {"success": False, "error": f"unknown_command {command}"}
 
         full_response = format_response(message, response)
-        return full_response, [websocket]
+        return full_response, {websocket}
 
-    async def is_keyring_locked(self) -> Dict[str, Any]:
+    async def get_command_mapping(self) -> Dict[str, Command]:
+        """
+        Returns a mapping of commands to their respective function calls.
+        """
+        return {
+            "start_service": self.start_service,
+            "start_plotting": self.start_plotting,
+            "stop_plotting": self.stop_plotting,
+            "stop_service": self.stop_service,
+            "is_running": self.is_running_command,
+            "running_services": self.running_services_command,
+            "is_keyring_locked": self.is_keyring_locked,
+            "keyring_status": self.keyring_status_command,
+            "unlock_keyring": self.unlock_keyring,
+            "validate_keyring_passphrase": self.validate_keyring_passphrase,
+            "set_keyring_passphrase": self.set_keyring_passphrase,
+            "remove_keyring_passphrase": self.remove_keyring_passphrase,
+            "exit": self.stop_command,
+            "register_service": self.register_service,
+            "get_status": self.get_status,
+            "get_version": self.get_version,
+            "get_plotters": self.get_plotters,
+        }
+
+    async def is_keyring_locked(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
         locked: bool = Keychain.is_keyring_locked()
         response: Dict[str, Any] = {"success": True, "is_keyring_locked": locked}
         return response
+
+    async def keyring_status_command(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.keyring_status()
 
     async def keyring_status(self) -> Dict[str, Any]:
         can_save_passphrase: bool = supports_os_passphrase_storage()
@@ -391,7 +418,7 @@ class WebSocketServer:
         self.log.debug(f"Keyring status: {response}")
         return response
 
-    async def unlock_keyring(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def unlock_keyring(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
         success: bool = False
         error: Optional[str] = None
         key: Optional[str] = request.get("key", None)
@@ -423,7 +450,11 @@ class WebSocketServer:
         response: Dict[str, Any] = {"success": success, "error": error}
         return response
 
-    async def validate_keyring_passphrase(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def validate_keyring_passphrase(
+        self,
+        websocket: WebSocketResponse,
+        request: Dict[str, Any],
+    ) -> Dict[str, Any]:
         success: bool = False
         error: Optional[str] = None
         key: Optional[str] = request.get("key", None)
@@ -440,7 +471,7 @@ class WebSocketServer:
         response: Dict[str, Any] = {"success": success, "error": error}
         return response
 
-    async def set_keyring_passphrase(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def set_keyring_passphrase(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
         success: bool = False
         error: Optional[str] = None
         current_passphrase: Optional[str] = None
@@ -484,7 +515,7 @@ class WebSocketServer:
         response: Dict[str, Any] = {"success": success, "error": error}
         return response
 
-    async def remove_keyring_passphrase(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def remove_keyring_passphrase(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
         success: bool = False
         error: Optional[str] = None
         current_passphrase: Optional[str] = None
@@ -511,15 +542,15 @@ class WebSocketServer:
         response: Dict[str, Any] = {"success": success, "error": error}
         return response
 
-    def get_status(self) -> Dict[str, Any]:
+    async def get_status(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
         response = {"success": True, "genesis_initialized": True}
         return response
 
-    def get_version(self) -> Dict[str, Any]:
+    async def get_version(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
         response = {"success": True, "version": __version__}
         return response
 
-    async def get_plotters(self) -> Dict[str, Any]:
+    async def get_plotters(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
         plotters: Dict[str, Any] = get_available_plotters(self.root_path)
         response: Dict[str, Any] = {"success": True, "plotters": plotters}
         return response
@@ -619,8 +650,6 @@ class WebSocketServer:
             final_words = ["Renamed final file"]
         elif plotter == "bladebit":
             final_words = ["Finished plotting in"]
-        elif plotter == "bladebit2":
-            final_words = ["Finished plotting in"]
         elif plotter == "madmax":
             temp_dir = config["temp_dir"]
             final_dir = config["final_dir"]
@@ -662,17 +691,17 @@ class WebSocketServer:
         p = request.get("p")  # Pool pubkey
         c = request.get("c")  # Pool contract address
 
-        command_args: List[str] = []
-        command_args.append(f"-n{n}")
-        command_args.append(f"-d{d}")
-        command_args.append(f"-r{r}")
+        command_args: List[str] = ["-n", str(n), "-d", d, "-r", str(r)]
 
         if f is not None:
-            command_args.append(f"-f{f}")
+            command_args.append("-f")
+            command_args.append(str(f))
         if p is not None:
-            command_args.append(f"-p{p}")
+            command_args.append("-p")
+            command_args.append(str(p))
         if c is not None:
-            command_args.append(f"-c{c}")
+            command_args.append("-c")
+            command_args.append(str(c))
 
         return command_args
 
@@ -687,15 +716,11 @@ class WebSocketServer:
         x = request["x"]  # Exclude final directory
         override_k = request["overrideK"]  # Force plot sizes < k32
 
-        command_args: List[str] = []
-        command_args.append(f"-k{k}")
-        command_args.append(f"-t{t}")
-        command_args.append(f"-2{t2}")
-        command_args.append(f"-b{b}")
-        command_args.append(f"-u{u}")
+        command_args: List[str] = ["-k", str(k), "-t", t, "-2", t2, "-b", str(b), "-u", str(u)]
 
         if a is not None:
-            command_args.append(f"-a{a}")
+            command_args.append("-a")
+            command_args.append(str(a))
         if e is True:
             command_args.append("-e")
         if x is True:
@@ -706,22 +731,26 @@ class WebSocketServer:
         return command_args
 
     def _bladebit_plotting_command_args(self, request: Any, ignoreCount: bool) -> List[str]:
-        w = request.get("w", False)  # Warm start
-        m = request.get("m", False)  # Disable NUMA
-        no_cpu_affinity = request.get("no_cpu_affinity", False)
+        plot_type = request["plot_type"]
+        assert plot_type == "ramplot" or plot_type == "diskplot"
 
         command_args: List[str] = []
 
-        if w is True:
-            command_args.append("-w")
-        if m is True:
-            command_args.append("-m")
-        if no_cpu_affinity is True:
-            command_args.append("--no-cpu-affinity")
+        if plot_type == "ramplot":
+            w = request.get("w", False)  # Warm start
+            m = request.get("m", False)  # Disable NUMA
+            no_cpu_affinity = request.get("no_cpu_affinity", False)
 
-        return command_args
+            if w is True:
+                command_args.append("--warmstart")
+            if m is True:
+                command_args.append("--nonuma")
+            if no_cpu_affinity is True:
+                command_args.append("--no-cpu-affinity")
 
-    def _bladebit2_plotting_command_args(self, request: Any, ignoreCount: bool) -> List[str]:
+            return command_args
+
+        # if plot_type == "diskplot"
         w = request.get("w", False)  # Warm start
         m = request.get("m", False)  # Disable NUMA
         no_cpu_affinity = request.get("no_cpu_affinity", False)
@@ -739,20 +768,21 @@ class WebSocketServer:
         no_t1_direct = request.get("no_t1_direct", False)
         no_t2_direct = request.get("no_t2_direct", False)
 
-        command_args: List[str] = []
-
         if w is True:
-            command_args.append("-w")
+            command_args.append("--warmstart")
         if m is True:
-            command_args.append("-m")
+            command_args.append("--nonuma")
         if no_cpu_affinity is True:
             command_args.append("--no-cpu-affinity")
 
-        command_args.append(f"-t{t1}")
+        command_args.append("-t")
+        command_args.append(t1)
         if t2:
-            command_args.append(f"-2{t2}")
+            command_args.append("-2")
+            command_args.append(t2)
         if u:
-            command_args.append(f"-u{u}")
+            command_args.append("-u")
+            command_args.append(str(u))
         if cache:
             command_args.append("--cache")
             command_args.append(str(cache))
@@ -810,6 +840,13 @@ class WebSocketServer:
         plotter: str = request.get("plotter", "chiapos")
         command_args: List[str] = ["chia", "plotters", plotter]
 
+        if plotter == "bladebit":
+            # plotter command must be either
+            # 'chia plotters bladebit ramplot' or 'chia plotters bladebit diskplot'
+            plot_type = request["plot_type"]
+            assert plot_type == "diskplot" or plot_type == "ramplot"
+            command_args.append(plot_type)
+
         command_args.extend(self._common_plotting_command_args(request, ignoreCount))
 
         if plotter == "chiapos":
@@ -818,8 +855,6 @@ class WebSocketServer:
             command_args.extend(self._madmax_plotting_command_args(request, ignoreCount, index))
         elif plotter == "bladebit":
             command_args.extend(self._bladebit_plotting_command_args(request, ignoreCount))
-        elif plotter == "bladebit2":
-            command_args.extend(self._bladebit2_plotting_command_args(request, ignoreCount))
 
         return command_args
 
@@ -925,7 +960,7 @@ class WebSocketServer:
                 current_process.wait()  # prevent zombies
             self._run_next_serial_plotting(loop, queue)
 
-    async def start_plotting(self, request: Dict[str, Any]):
+    async def start_plotting(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
         service_name = request["service"]
 
         plotter = request.get("plotter", "chiapos")
@@ -993,7 +1028,7 @@ class WebSocketServer:
 
         return response
 
-    async def stop_plotting(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def stop_plotting(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
         id = request["id"]
         config = self._get_plots_queue_item(id)
         if config is None:
@@ -1013,7 +1048,7 @@ class WebSocketServer:
                 run_next = True
                 config["state"] = PlotState.REMOVING
                 self.state_changed(service_plotter, self.prepare_plot_state_message(PlotEvent.STATE_CHANGED, id))
-                await kill_process(process, self.root_path, service_plotter, id)
+                await kill_processes([process], self.root_path, service_plotter, id)
 
             config["state"] = PlotState.FINISHED
             config["deleted"] = True
@@ -1035,7 +1070,7 @@ class WebSocketServer:
             self.state_changed(service_plotter, self.prepare_plot_state_message(PlotEvent.STATE_CHANGED, id))
             return {"success": False}
 
-    async def start_service(self, request: Dict[str, Any]):
+    async def start_service(self, websocket: WebSocketResponse, request: Dict[str, Any]):
         service_command = request["service"]
 
         error = None
@@ -1049,9 +1084,8 @@ class WebSocketServer:
             error = "unknown service"
 
         if service_command in self.services:
-            service = self.services[service_command]
-            r = service is not None and service.poll() is None
-            if r is False:
+            processes = self.services[service_command]
+            if all(process.poll() is not None for process in processes):
                 self.services.pop(service_command)
                 error = None
             else:
@@ -1071,7 +1105,7 @@ class WebSocketServer:
                 if testing is True:
                     exe_command = f"{service_command} --testing=true"
                 process, pid_path = launch_service(self.root_path, exe_command)
-                self.services[service_command] = process
+                self.services[service_command] = [process]
                 success = True
             except (subprocess.SubprocessError, IOError):
                 log.exception(f"problem starting {service_command}")
@@ -1080,19 +1114,20 @@ class WebSocketServer:
         response = {"success": success, "service": service_command, "error": error}
         return response
 
-    async def stop_service(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def stop_service(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
         service_name = request["service"]
         result = await kill_service(self.root_path, self.services, service_name)
         response = {"success": result, "service_name": service_name}
         return response
 
     def is_service_running(self, service_name: str) -> bool:
+        processes: List[subprocess.Popen]
         if service_name == service_plotter:
-            processes = self.services.get(service_name)
-            is_running = processes is not None and len(processes) > 0
+            processes = self.services.get(service_name, [])
+            is_running = len(processes) > 0
         else:
-            process = self.services.get(service_name)
-            is_running = process is not None and process.poll() is None
+            processes = self.services.get(service_name, [])
+            is_running = any(process.poll() is None for process in processes)
             if not is_running:
                 # Check if we have a connection to the requested service. This might be the
                 # case if the service was started manually (i.e. not started by the daemon).
@@ -1101,11 +1136,17 @@ class WebSocketServer:
                     is_running = len(service_connections) > 0
         return is_running
 
-    async def running_services(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def running_services_command(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.running_services()
+
+    async def running_services(self) -> Dict[str, Any]:
         services = list({*self.services.keys(), *self.connections.keys()})
         running_services = [service_name for service_name in services if self.is_service_running(service_name)]
 
         return {"success": True, "running_services": running_services}
+
+    async def is_running_command(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.is_running(request=request)
 
     async def is_running(self, request: Dict[str, Any]) -> Dict[str, Any]:
         service_name = request["service"]
@@ -1116,7 +1157,6 @@ class WebSocketServer:
         if self.webserver is not None:
             self.webserver.close()
             await self.webserver.await_closed()
-        self.shutdown_event.set()
         log.info("chia daemon exiting")
 
     async def register_service(self, websocket: WebSocketResponse, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -1126,8 +1166,8 @@ class WebSocketServer:
             self.log.error("Service Name missing from request to 'register_service'")
             return {"success": False}
         if service not in self.connections:
-            self.connections[service] = []
-        self.connections[service].append(websocket)
+            self.connections[service] = set()
+        self.connections[service].add(websocket)
 
         response: Dict[str, Any] = {"success": True}
         if service == service_plotter:
@@ -1137,7 +1177,6 @@ class WebSocketServer:
                 "queue": self.extract_plot_queue(),
             }
         else:
-            self.remote_address_map[websocket] = service
             if self.ping_job is None:
                 self.ping_job = asyncio.create_task(self.ping_task())
         self.log.info(f"registered for service {service}")
@@ -1173,7 +1212,9 @@ def plotter_log_path(root_path: Path, id: str):
     return root_path / "plotter" / f"plotter_log_{id}.txt"
 
 
-def launch_plotter(root_path: Path, service_name: str, service_array: List[str], id: str):
+def launch_plotter(
+    root_path: Path, service_name: str, service_array: List[str], id: str
+) -> Tuple[subprocess.Popen, Path]:
     # we need to pass on the possibly altered CHIA_ROOT
     os.environ["CHIA_ROOT"] = str(root_path)
     service_executable = executable_for_service(service_array[0])
@@ -1259,31 +1300,39 @@ def launch_service(root_path: Path, service_command) -> Tuple[subprocess.Popen, 
     return process, pid_path
 
 
-async def kill_process(
-    process: subprocess.Popen, root_path: Path, service_name: str, id: str, delay_before_kill: int = 15
+async def kill_processes(
+    processes: List[subprocess.Popen],
+    root_path: Path,
+    service_name: str,
+    id: str,
+    delay_before_kill: int = 15,
 ) -> bool:
     pid_path = pid_path_for_service(root_path, service_name, id)
 
     if sys.platform == "win32" or sys.platform == "cygwin":
         log.info("sending CTRL_BREAK_EVENT signal to %s", service_name)
-        # pylint: disable=E1101
-        kill(process.pid, signal.SIGBREAK)
 
+        for process in processes:
+            kill(process.pid, signal.SIGBREAK)
     else:
         log.info("sending term signal to %s", service_name)
-        process.terminate()
+        for process in processes:
+            process.terminate()
 
     count: float = 0
     while count < delay_before_kill:
-        if process.poll() is not None:
+        if all(process.poll() is not None for process in processes):
             break
         await asyncio.sleep(0.5)
         count += 0.5
     else:
-        process.kill()
+        for process in processes:
+            process.kill()
         log.info("sending kill signal to %s", service_name)
-    r = process.wait()
-    log.info("process %s returned %d", service_name, r)
+    for process in processes:
+        r = process.wait()
+        log.info("process %s returned %d", service_name, r)
+
     try:
         pid_path_killed = pid_path.with_suffix(".pid-killed")
         if pid_path_killed.exists():
@@ -1296,13 +1345,13 @@ async def kill_process(
 
 
 async def kill_service(
-    root_path: Path, services: Dict[str, subprocess.Popen], service_name: str, delay_before_kill: int = 15
+    root_path: Path, services: Dict[str, List[subprocess.Popen]], service_name: str, delay_before_kill: int = 15
 ) -> bool:
-    process = services.get(service_name)
-    if process is None:
+    processes = services.get(service_name)
+    if processes is None:
         return False
     del services[service_name]
-    result = await kill_process(process, root_path, service_name, "", delay_before_kill)
+    result = await kill_processes(processes, root_path, service_name, "", delay_before_kill)
     return result
 
 
@@ -1343,20 +1392,17 @@ async def async_run_daemon(root_path: Path, wait_for_unlock: bool = False) -> in
                 beta_metrics = BetaMetricsLogger(root_path)
                 beta_metrics.start_logging()
 
-            shutdown_event = asyncio.Event()
-
             ws_server = WebSocketServer(
                 root_path,
                 ca_crt_path,
                 ca_key_path,
                 crt_path,
                 key_path,
-                shutdown_event,
                 run_check_keys_on_unlock=wait_for_unlock,
             )
             await ws_server.setup_process_global_state()
-            await ws_server.start()
-            await shutdown_event.wait()
+            async with ws_server.run():
+                await ws_server.shutdown_event.wait()
 
             if beta_metrics is not None:
                 await beta_metrics.stop_logging()

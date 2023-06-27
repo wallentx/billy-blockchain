@@ -1,10 +1,12 @@
 [run]
 branch=True
 relative_files=True
-source=
+source_pkgs=
   chia
   tests
-concurrency=multiprocessing
+omit=
+  tests/**/config.py
+concurrency=multiprocessing, thread
 parallel=True
 
 [report]
@@ -15,3 +17,4 @@ exclude_lines =
   typing\.overload
   ^\s*\.\.\.\s*$
   if typing.TYPE_CHECKING:
+  if TYPE_CHECKING:

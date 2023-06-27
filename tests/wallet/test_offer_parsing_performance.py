@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import cProfile
+import sys
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -17,6 +18,9 @@ with_profile = False
 
 @contextmanager
 def enable_profiler(name: str) -> Iterator[None]:
+    if sys.version_info < (3, 8):
+        raise Exception(f"Python 3.8 or higher required, running with: {sys.version}")
+
     if not with_profile:
         yield
         return
@@ -30,7 +34,6 @@ def enable_profiler(name: str) -> Iterator[None]:
 
 @pytest.mark.benchmark
 def test_offer_parsing_performance() -> None:
-
     offer_bytes = bytes.fromhex(test_offer)
     with assert_runtime(seconds=2, label="Offer.from_bytes()"):
         with enable_profiler("offer-parsing"):
@@ -41,7 +44,6 @@ def test_offer_parsing_performance() -> None:
 
 @pytest.mark.benchmark
 def test_offered_coins_performance() -> None:
-
     offer_bytes = bytes.fromhex(test_offer)
     o = Offer.from_bytes(offer_bytes)
     with assert_runtime(seconds=2.5, label="Offer.from_bytes()"):

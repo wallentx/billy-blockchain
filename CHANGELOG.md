@@ -6,6 +6,243 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project does not yet adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 for setuptools_scm/PEP 440 reasons.
 
+## 1.8.1 Chia blockchain 2023-05-17
+
+### Changed
+- Updated testnet softfork height so softfork rules take effect on testnet immediately
+- Move to Discord in docs and install scripts (#15193)
+- Optimize compact proofs
+
+### Fixed
+- Issue where CLI only listed first 50 NFTs by hardcoding `num` param when listing NFTs from CLI
+- Issue where wallet might display `RuntimeError: dictionary changed size during iteration` by avoiding dict changes while iterating in `handle_nft`
+- Issue where node had trouble keeping peers with `assert self.peak is not None` error by not adding transactions to the mempool before it has a valid peak (fixes #15217)
+
+## 1.8.0 Chia blockchain 2023-05-03
+
+### Added
+- Added `chia completion` command
+- Added wallet_removed to `state_changes` messages to support wallet removal in GUI
+- Add support to `cat_spend` RPC for running TAIL
+- Expose NFT coin info's latest_height to RPCs requesting NFT info
+- Make `python -m chia` work
+- DataLayer plugin support and infrastructure
+
+### Changed
+- Fix soft fork to 60 days
+- Don't subscribe to all coin ids in the DB
+- Handle trade coins in the `try` block of `new_coin_state`
+- Add benchmark that tests the mempool over a long time
+- Enable soft-fork2 conditions (incl. ASSERT_BEFORE)
+- Update condition codes constants in clvm include file
+- Improve coin state retry wait logic and retry store test
+- Improve balance caching
+- Update Wallet command line help for key fingerprints
+- Optimize Mempool.add_to_pool()
+- Change self peer connection error to info, remove traceback
+- Reduce DB lookups in `handle_did` and `handle_nft`
+- Limit expiring transactions
+- Return fee estimates as integer mojos
+- Activate the soft-fork and soft-fork2 earlier on testnet10
+- Bump chia_rs to 0.2.7
+- Lower MAX_FUTURE_TIME to 2 minutes with the 1.8.0 soft-fork activation
+- List the columns for `INSERT` into `coin_record`
+
+### Fixed
+- Disconnect untrusted peers if we find a trusted synced one
+- Only compile CLVM if source newer than hex
+- Fixed windows issues with passphrase prompt on CLI by flushing prompt (Fixes #14889)
+- Fix removal while iterating over connections set
+- Fix the mempool fee rate calculation
+- Assert_before_height, assert_before_seconds fields in MempoolItem
+- Correct SQLite logging when using db_wrapper.manage_connection()
+- Case-insensitive DNS label matching to support bit 0x20 use
+- Check hint length in notification manager to avoid raise
+- Mempool insertion order
+- Drop leaking weight proof validation cache
+- Windows fix of memory profiler
+- Small improvements to trusted peer check to include IPv6 addresses and add tests
+- Close daemon client even for a BaseException in acquire_connection_to_daemon()
+- Rework config peer resolving and connection handling
+- Fix, simplify, and test `TransactionRecord.is_valid`
+- Check for directory existence before creating offer
+- Fix manage_clvm.py hash building and std libraries
+- Resolve introducer right before the connection attempt (Fixed #14888)
+- Async DNS lookups
+- Move assignments of `WalletStateManager._sync_target`
+- Lock `WalletStateManager.lock` while populating balances initially
+
+## 1.7.1 Chia blockchain 2023-03-22
+
+### Added
+- `get_transaction_memo` wallet RPC
+- `set_wallet_resync_on_startup` wallet RPC to reset wallet sync data on wallet restart
+- `nft_count_nfts` wallet RPC - counts NFTs per wallet or for all wallets
+- Community DNS introducers to initial (default) config.yaml
+- additional metrics for `state_changed` events (used by chia-exporter)
+- Python 3.11 support
+- `chia wallet check` CLI command
+- `reuse_public_key_for_change` config.yaml option to allow address reuse for change
+- `nft_id` added to the JSON output of all NFT RPCs
+- `curry` Chialisp library replaces `curry-and-treehash`
+
+### Changed
+- `chia show -f` changed to output proper JSON
+- `Rate limiting` log messages are themselves rate limited
+- Notified GUI when wallets are removed
+- Optimized counting of NFTs during removal by leveraging SQLite
+- Offer CLI command help now shows `--fee` units as XCH
+- Optimized offer code by limiting `additions` recomputation
+- `chia_rs` updated to 0.2.4
+- Improve the help text for the `chia peer` and `chia peer -a` commands
+- Remove redundant checks for minting coin and reserve fee
+- `nft_get_nfts` performance improvements by shifting paging to SQLite
+- `did_find_lost_did` improved
+- Extend the sign APIs to support hex string
+- Changed mempool backend to use an in-memory SQLite DB
+
+### Fixed
+- Quieted wallet log output for `Record: ... not in mempool` (fixes #14452)
+- Quieted log output for `AttributeError: 'NoneType' object has no attribute '_get_extra_info`
+- Reduced log output for `Using previous generator for height`
+- Fixed error message when the `coin_id` argument for `nft_get_info` cannot be decoded
+- Reduced cases where wallet claims to be synced while still syncing
+- Resolved unnecessary error logging caused by unhinted coins (see #14757)
+- Avoid `Unclosed client session` errors and associated tracebacks when using Ctrl-c during CLI commands
+- Avoid `AttributeError` when shutting down plotting
+- Added `anyio` as a dependency
+- Resolved issues when offers involve small amounts and royalties round down to zero (fixes #14744)
+- Limit retries to 3 for submitting offer transactions to the mempool and improved handling of offer status (fixes #14714)
+- Resolved issues with offers stuck as pending when multiple people accept the same offer (fixes #14621)
+- Improved the accuracy of the wallet sync status indication
+
+### Deprecated
+- `curry-and-treehash` Chialisp library replaced by new `curry` library
+
+## 1.7.0 Chia blockchain 2023-02-15
+
+### Added
+
+- New `chia wallet coins` CLI and RPCs for listing, splitting, and combining coins
+- New on-chain notification for offers, specifically designed for NFT offers
+- New full node dynamic fee estimator (`chia show -f` and `get_fee_estimate` full node RPC)
+- Implementation of soft fork at block 3630000 - see the 1.7.0 blog post for more details
+- Add gzip support to DataLayer download client (Thanks, @Chida82!)
+- Add proxy support to DataLayer download client (Thanks again, @Chida82!)
+- Add `get_timestamp_for_height` Wallet RPC for converting heights to timestamps
+- Add `tools/legacy_keyring.py` to allow migration from the removed old key storage format.  Available only from source installations.
+- Add Arch Linux to install-gui.sh script (Thanks, @DaOneLuna!)
+- Add a `daemon_heartbeat` setting to config.yaml
+- add `trusted_max_subscribe_items` and `wallet:trusted_peers` to config.yaml
+- NFT bulk transfer and DID assignment wallet RPCs
+- Add the expected offer ID to some RPCs that take offer blobs
+
+### Changed
+
+- bump `chia_rs` dependency to `0.2.0`
+- Update version of `clvm_tools_rs` to `0.1.30`
+- Use better check that we are on mainnet when deciding to use default Chia DNS server
+- Remove conflicting TXs before adding SpendBundle to Mempool in `add_spend_bundle`
+- Try each Chia DNS Server in list before trying introducers
+- optimize mempool's potential cache
+- Display complete exception info in log file for validation, consensus, and protocol errors
+- Enable setting time between blocks in full node sim
+- Limit rate of log messages when farmer is disconnected from pool
+- Add SigningMode and update `verify_signature` RPC to work with `sign_message_by_*` RPCs
+
+### Fixed
+
+- Offer security updates: Offers that are generated with this version cannot be accepted with older versions of Chia - see blog post for details
+- server: Fix invalid attribute accesses in `WSChiaConnection`
+- header validation time logging severity reduced from warning to info when time is less than two seconds
+- replacing transactions in the mempool is normal behavior, not a warning
+- don't throw unnecessary exception on peer connect
+- Return existing CAT wallet instead of raising
+- Resolve peers in harvester and timelord startup (fixes #14158)
+- bump default bladebit version to `2.0.1` in `install-plotter.sh`
+- disallow empty SpendBundles in the mempool
+- avoid an exception in some rare cases when requesting the pool login link
+- provide a clear error when the `wallet_id` value is missing in a call to the `nft_set_bulk_nft_did` wallet rpc (Thanks, @steppsr!)
+- allow cancellation of offers when there is no spendable balance
+- track all transactions of an NFT bulk mint instead of just the first
+- Make the `--id` flag on cancel_offer required
+- corrected a target address vs. metadata mismatch when bulk minting and airdropping NFTs
+- Fixed wallet DB issues resulting when there are unexpected failures during syncing
+
+### Deprecated
+
+- Python 3.7 support is deprecated and will be removed in a future version
+
+## 1.6.2 Chia blockchain 2023-01-03
+
+### Added
+
+- Add WalletConnect
+- Add Bladebit v2 plotting support (RAM and Disk)
+- Add `chia keys show --json` (display all keys as json) (thanks @kimsk)
+- Add `chia data get_sync_status` CLI and RPC.
+- Add download progress log and stream in Datalayer (thanks @Chida82)
+- Add wallet RPC `/get_spendable_coins`
+- Add wallet RPC `/get_coin_records_by_names`
+- Add wallet RPC `/verify_signature`
+- Add wallet RPC `/did_message_spend`
+- Add wallet RPC `/did_get_info`
+- Add wallet RPC `/nft_set_did_bulk`
+- Add options `--max-coin-amount` and `--exclude-coin-ids` to `chia wallet send`
+- Add `--fingerprint` option to `chia keys show`
+- Add SECURITY.md
+- Add GUI support for adding and removing full node peers
+- New GUI setting for NFT image scaling
+- New GUI warning if the GUI version is different from the back-end version
+
+### Changed
+
+- Remove legacy keyring support
+- Drop support for bladebit v1 and use bladebit v2 for RAM and Disk plots
+- Removed remaining vestiges of defunct backup service
+- `debug_spend_bundle` -- print coin id as hex string
+- Only open SQLite log file once per db wrapper
+- Switch to context manager for task timing instrumentation
+- Revert rate limiting messages from `warning` back to `debug`
+- `add_private_key` now returns the fingerprint of the added key
+- SQLite log the full node db version check
+- Delete DID wallet after transfer
+- Don't validate weight proof on wallet log_in
+- Drop broken message types logging
+- Return minted NFT ID & Allow transfer NFT with NFT ID
+- Display key labels when making a wallet key selection
+- Add support for pending transactions to `get_mempool_item_by_tx_id()` (thanks @rwarren)
+- Simplify the mempool manager instantiation
+- Add coin id and address to NFT Details screen in GUI
+- New GUI prefs location under `CHIA_ROOT`
+- Removed SkyNFT references
+- Add GUI memo field when sending XCH
+- Update to Electron 20.3.5
+
+### Fixed
+
+- Fixed a missing state_changed GUI notification
+- Minor sync optimizations and refactor; eliminate redundant weight proof requests
+- Upped the number of file handles for madmax
+- Catch exceptions raised when resolving plot directories (fix #13723)
+- Call close callback for already closed connections (fix #9172)
+- Set GUI binary name to `chia-blockchain` in the Fedora rpm and Ubuntu deb (fix #13847)
+- Add simple fix to set farmer response timer for `SP: 0` (fix #11869, #10900) (thanks @neurosis69)
+- Preserve correct `MempoolItem` block height when rebuilding mempool
+- Windows: start daemon without a window and detached from current console (fix #13175) (thanks @jcteng)
+- Fix pool singleton sync height in DB
+- Remove duplicate nft wallet deletion in reorg
+- Fix DID unnecessary wallet deletion
+- Improve performance of wallets with many NFTs
+- Stop creating unecessary index in notification store (fix #13955)
+- Fix issues in switching pools introduced in 1.6.0 (fix #13872)
+- Handle incoming unknown capabilities
+- GUI Offer Builder displays totals with royalties when requesting an NFT
+- Fixed NFT inbox detection
+- Convert and cache NFT metadata as UTF-8
+- Fixed issue with switching between farmer and wallet modes (GUI issue #1005)
+- Improve error message when sending more mojos than Spendable Balance
+
 ## 1.6.1 Chia blockchain 2022-11-03
 
 ### Added

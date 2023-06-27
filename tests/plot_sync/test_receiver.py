@@ -78,7 +78,8 @@ def create_payload(payload_type: Any, start: bool, *args: Any) -> Any:
 def assert_error_response(plot_sync: Receiver, error_code: ErrorCodes) -> None:
     connection = plot_sync.connection()
     assert connection is not None
-    message = connection.last_sent_message
+    # WSChiaConnection doesn't have last_sent_message its part of the WSChiaConnectionDummy class used for testing
+    message = connection.last_sent_message  # type: ignore[attr-defined]
     assert message is not None
     response: PlotSyncResponse = PlotSyncResponse.from_bytes(message.data)
     assert response.error is not None
@@ -246,8 +247,8 @@ async def test_to_dict(counts_only: bool) -> None:
     assert plot_sync_dict_1["last_sync_time"] is None
     assert plot_sync_dict_1["connection"] == {
         "node_id": receiver.connection().peer_node_id,
-        "host": receiver.connection().peer_host,
-        "port": receiver.connection().peer_port,
+        "host": receiver.connection().peer_info.host,
+        "port": receiver.connection().peer_info.port,
     }
 
     # We should get equal dicts

@@ -3,13 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import AsyncGenerator, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, AsyncIterator, Dict, List, Optional, Tuple, Union, cast
 
 from chia.consensus.constants import ConsensusConstants
+from chia.daemon.server import WebSocketServer
 from chia.farmer.farmer import Farmer
+from chia.farmer.farmer_api import FarmerAPI
 from chia.full_node.full_node import FullNode
 from chia.full_node.full_node_api import FullNodeAPI
 from chia.harvester.harvester import Harvester
+from chia.harvester.harvester_api import HarvesterAPI
 from chia.protocols.shared_protocol import Capability
 from chia.server.server import ChiaServer
 from chia.server.start_service import Service
@@ -29,14 +32,20 @@ from chia.simulator.setup_services import (
 )
 from chia.simulator.socket import find_available_listen_port
 from chia.simulator.time_out_assert import time_out_assert_custom_interval
+from chia.timelord.timelord import Timelord
+from chia.timelord.timelord_api import TimelordAPI
 from chia.types.blockchain_format.sized_bytes import bytes32
-from chia.types.peer_info import PeerInfo
+from chia.types.peer_info import UnresolvedPeerInfo
 from chia.util.hash import std_hash
 from chia.util.ints import uint16, uint32
+from chia.util.keychain import Keychain
 from chia.wallet.wallet_node import WalletNode
+from chia.wallet.wallet_node_api import WalletNodeAPI
 
 SimulatorsAndWallets = Tuple[List[FullNodeSimulator], List[Tuple[WalletNode, ChiaServer]], BlockTools]
-SimulatorsAndWalletsServices = Tuple[List[Service[FullNode]], List[Service[WalletNode]], BlockTools]
+SimulatorsAndWalletsServices = Tuple[
+    List[Service[FullNode, FullNodeSimulator]], List[Service[WalletNode, WalletNodeAPI]], BlockTools
+]
 
 
 def cleanup_keyring(keyring: TempKeyring) -> None:
@@ -50,7 +59,7 @@ def constants_for_dic(dic: Dict[str, int]) -> ConsensusConstants:
     return test_constants.replace(**dic)
 
 
-async def _teardown_nodes(node_aiters: List) -> None:
+async def _teardown_nodes(node_aiters: List[AsyncGenerator[Any, None]]) -> None:
     awaitables = [node_iter.__anext__() for node_iter in node_aiters]
     for sublist_awaitable in asyncio.as_completed(awaitables):
         try:
@@ -67,7 +76,7 @@ async def setup_two_nodes(
     """
 
     with TempKeyring(populate=True) as keychain1, TempKeyring(populate=True) as keychain2:
-        bt1 = await create_block_tools_async(constants=test_constants, keychain=keychain1)
+        bt1 = await create_block_tools_async(constants=consensus_constants, keychain=keychain1)
         node_iters = [
             setup_full_node(
                 consensus_constants,
@@ -81,7 +90,7 @@ async def setup_two_nodes(
                 consensus_constants,
                 "blockchain_test_2.db",
                 self_hostname,
-                await create_block_tools_async(constants=test_constants, keychain=keychain2),
+                await create_block_tools_async(constants=consensus_constants, keychain=keychain2),
                 simulator=False,
                 db_version=db_version,
             ),
@@ -113,7 +122,7 @@ async def setup_n_nodes(
                 consensus_constants,
                 f"blockchain_test_{i}.db",
                 self_hostname,
-                await create_block_tools_async(constants=test_constants, keychain=keyring.get_keychain()),
+                await create_block_tools_async(constants=consensus_constants, keychain=keyring.get_keychain()),
                 simulator=False,
                 db_version=db_version,
             )
@@ -131,45 +140,6 @@ async def setup_n_nodes(
         keyring.cleanup()
 
 
-async def setup_node_and_wallet(
-    consensus_constants: ConsensusConstants,
-    self_hostname: str,
-    key_seed: Optional[bytes32] = None,
-    db_version: int = 1,
-    disable_capabilities: Optional[List[Capability]] = None,
-) -> AsyncGenerator[Tuple[FullNodeAPI, WalletNode, ChiaServer, ChiaServer, BlockTools], None]:
-    with TempKeyring(populate=True) as keychain:
-        btools = await create_block_tools_async(constants=test_constants, keychain=keychain)
-        node_iters = [
-            setup_full_node(
-                consensus_constants,
-                "blockchain_test.db",
-                self_hostname,
-                btools,
-                simulator=False,
-                db_version=db_version,
-                disable_capabilities=disable_capabilities,
-            ),
-            setup_wallet_node(
-                btools.config["self_hostname"],
-                consensus_constants,
-                btools,
-                None,
-                key_seed=key_seed,
-            ),
-        ]
-
-        full_node_service = await node_iters[0].__anext__()
-        full_node_api = full_node_service._api
-        wallet_node_service = await node_iters[1].__anext__()
-        wallet = wallet_node_service._node
-        s2 = wallet_node_service._node.server
-
-        yield full_node_api, wallet, full_node_api.full_node.server, s2, btools
-
-        await _teardown_nodes(node_iters)
-
-
 async def setup_simulators_and_wallets(
     simulator_count: int,
     wallet_count: int,
@@ -182,13 +152,11 @@ async def setup_simulators_and_wallets(
     db_version: int = 1,
     config_overrides: Optional[Dict[str, int]] = None,
     disable_capabilities: Optional[List[Capability]] = None,
-):
+) -> AsyncGenerator[Tuple[List[FullNodeSimulator], List[Tuple[WalletNode, ChiaServer]], BlockTools], None]:
     with TempKeyring(populate=True) as keychain1, TempKeyring(populate=True) as keychain2:
         res = await setup_simulators_and_wallets_inner(
-            config_overrides,
             db_version,
             dic,
-            disable_capabilities,
             initial_num_public_keys,
             key_seed,
             keychain1,
@@ -197,16 +165,18 @@ async def setup_simulators_and_wallets(
             spam_filter_after_n_txs,
             wallet_count,
             xch_spam_amount,
+            config_overrides,
+            disable_capabilities,
         )
 
         bt_tools, node_iters, simulators, wallets_services = res
         wallets = []
-        for service in wallets_services:
-            wallets.append((service._node, service._node.server))
+        for wallets_servic in wallets_services:
+            wallets.append((wallets_servic._node, wallets_servic._node.server))
 
         nodes = []
-        for service in simulators:
-            nodes.append(service._api)
+        for nodes_service in simulators:
+            nodes.append(nodes_service._api)
 
         yield nodes, wallets, bt_tools[0]
 
@@ -216,22 +186,22 @@ async def setup_simulators_and_wallets(
 async def setup_simulators_and_wallets_service(
     simulator_count: int,
     wallet_count: int,
-    dic: Dict,
-    spam_filter_after_n_txs=200,
-    xch_spam_amount=1000000,
+    dic: Dict[str, int],
+    spam_filter_after_n_txs: int = 200,
+    xch_spam_amount: int = 1000000,
     *,
-    key_seed=None,
-    initial_num_public_keys=5,
-    db_version=1,
-    config_overrides: Optional[Dict] = None,
+    key_seed: Optional[bytes32] = None,
+    initial_num_public_keys: int = 5,
+    db_version: int = 1,
+    config_overrides: Optional[Dict[str, int]] = None,
     disable_capabilities: Optional[List[Capability]] = None,
-):
+) -> AsyncGenerator[
+    Tuple[List[Service[FullNode, FullNodeSimulator]], List[Service[WalletNode, WalletNodeAPI]], BlockTools], None
+]:
     with TempKeyring(populate=True) as keychain1, TempKeyring(populate=True) as keychain2:
         res = await setup_simulators_and_wallets_inner(
-            config_overrides,
             db_version,
             dic,
-            disable_capabilities,
             initial_num_public_keys,
             key_seed,
             keychain1,
@@ -240,6 +210,8 @@ async def setup_simulators_and_wallets_service(
             spam_filter_after_n_txs,
             wallet_count,
             xch_spam_amount,
+            config_overrides,
+            disable_capabilities,
         )
 
         bt_tools, node_iters, simulators, wallets_services = res
@@ -249,22 +221,29 @@ async def setup_simulators_and_wallets_service(
 
 
 async def setup_simulators_and_wallets_inner(
-    config_overrides,
-    db_version,
-    dic,
-    disable_capabilities,
-    initial_num_public_keys,
-    key_seed,
-    keychain1,
-    keychain2,
-    simulator_count,
-    spam_filter_after_n_txs,
-    wallet_count,
-    xch_spam_amount,
-):
-    simulators: List[FullNodeAPI] = []
-    wallets = []
-    node_iters = []
+    db_version: int,
+    dic: Dict[str, int],
+    initial_num_public_keys: int,
+    key_seed: Optional[bytes32],
+    keychain1: Keychain,
+    keychain2: Keychain,
+    simulator_count: int,
+    spam_filter_after_n_txs: int,
+    wallet_count: int,
+    xch_spam_amount: int,
+    config_overrides: Optional[Dict[str, int]],
+    disable_capabilities: Optional[List[Capability]],
+) -> Tuple[
+    List[BlockTools],
+    List[AsyncGenerator[Union[Service[FullNode, FullNodeSimulator], Service[WalletNode, WalletNodeAPI]], None]],
+    List[Service[FullNode, FullNodeSimulator]],
+    List[Service[WalletNode, WalletNodeAPI]],
+]:
+    simulators: List[Service[FullNode, FullNodeSimulator]] = []
+    wallets: List[Service[WalletNode, WalletNodeAPI]] = []
+    node_iters: List[
+        AsyncGenerator[Union[Service[FullNode, FullNodeSimulator], Service[WalletNode, WalletNodeAPI]], None]
+    ] = []
     bt_tools: List[BlockTools] = []
     consensus_constants: ConsensusConstants = constants_for_dic(dic)
     for index in range(0, simulator_count):
@@ -274,14 +253,17 @@ async def setup_simulators_and_wallets_inner(
                 consensus_constants, const_dict=dic, keychain=keychain1, config_overrides=config_overrides
             )
         )  # block tools modifies constants
-        sim = setup_full_node(
-            bt_tools[index].constants,
-            bt_tools[index].config["self_hostname"],
-            db_name,
-            bt_tools[index],
-            simulator=True,
-            db_version=db_version,
-            disable_capabilities=disable_capabilities,
+        sim = cast(
+            AsyncGenerator[Service[FullNode, FullNodeSimulator], None],
+            setup_full_node(
+                consensus_constants=bt_tools[index].constants,
+                db_name=db_name,
+                self_hostname=bt_tools[index].config["self_hostname"],
+                local_bt=bt_tools[index],
+                simulator=True,
+                db_version=db_version,
+                disable_capabilities=disable_capabilities,
+            ),
         )
         service = await sim.__anext__()
         simulators.append(service)
@@ -307,7 +289,8 @@ async def setup_simulators_and_wallets_inner(
             key_seed=seed,
             initial_num_public_keys=initial_num_public_keys,
         )
-        wallets.append(await wlt.__anext__())
+        wallet_service = await wlt.__anext__()
+        wallets.append(wallet_service)
         node_iters.append(wlt)
     return bt_tools, node_iters, simulators, wallets
 
@@ -319,9 +302,8 @@ async def setup_farmer_multi_harvester(
     consensus_constants: ConsensusConstants,
     *,
     start_services: bool,
-) -> AsyncIterator[Tuple[List[Service[Harvester]], Service[Farmer], BlockTools]]:
-
-    node_iterators = [
+) -> AsyncIterator[Tuple[List[Service[Harvester, HarvesterAPI]], Service[Farmer, FarmerAPI], BlockTools]]:
+    farmer_node_iterators = [
         setup_farmer(
             block_tools,
             temp_dir / "farmer",
@@ -331,15 +313,15 @@ async def setup_farmer_multi_harvester(
             start_service=start_services,
         )
     ]
-    farmer_service = await node_iterators[0].__anext__()
+    farmer_service = await farmer_node_iterators[0].__anext__()
     if start_services:
-        farmer_peer = PeerInfo(block_tools.config["self_hostname"], farmer_service._server._port)
+        farmer_peer = UnresolvedPeerInfo(block_tools.config["self_hostname"], uint16(farmer_service._server._port))
     else:
         farmer_peer = None
-
+    harvester_node_iterators = []
     for i in range(0, harvester_count):
         root_path: Path = temp_dir / f"harvester_{i}"
-        node_iterators.append(
+        harvester_node_iterators.append(
             setup_harvester(
                 block_tools,
                 root_path,
@@ -350,7 +332,7 @@ async def setup_farmer_multi_harvester(
         )
 
     harvester_services = []
-    for node in node_iterators[1:]:
+    for node in harvester_node_iterators:
         harvester_service = await node.__anext__()
         harvester_services.append(harvester_service)
 
@@ -363,7 +345,8 @@ async def setup_farmer_multi_harvester(
     farmer_service.stop()
     await farmer_service.wait_closed()
 
-    await _teardown_nodes(node_iterators)
+    await _teardown_nodes(harvester_node_iterators)
+    await _teardown_nodes(farmer_node_iterators)
 
 
 async def setup_full_system(
@@ -372,115 +355,152 @@ async def setup_full_system(
     b_tools: Optional[BlockTools] = None,
     b_tools_1: Optional[BlockTools] = None,
     db_version: int = 1,
-    connect_to_daemon: bool = False,
-):
+) -> AsyncGenerator[
+    Tuple[Any, Any, Harvester, Farmer, Any, Service[Timelord, TimelordAPI], object, object, Any, ChiaServer], None
+]:
     with TempKeyring(populate=True) as keychain1, TempKeyring(populate=True) as keychain2:
-        if b_tools is None:
-            b_tools = await create_block_tools_async(constants=test_constants, keychain=keychain1)
-        if b_tools_1 is None:
-            b_tools_1 = await create_block_tools_async(constants=test_constants, keychain=keychain2)
+        daemon_ws, node_iters, ret = await setup_full_system_inner(
+            b_tools, b_tools_1, False, consensus_constants, db_version, keychain1, keychain2, shared_b_tools
+        )
 
-        if connect_to_daemon:
-            daemon_iter = setup_daemon(btools=b_tools)
-            daemon_ws = await daemon_iter.__anext__()
+        yield ret
 
-        # Start the introducer first so we can find out the port, and use that for the nodes
-        introducer_iter = setup_introducer(shared_b_tools, uint16(0))
-        introducer_service = await introducer_iter.__anext__()
-        introducer = introducer_service._api
-        introducer_server = introducer_service._node.server
-        # Then start the full node so we can use the port for the farmer and timelord
-        full_node_iters = [
-            setup_full_node(
-                consensus_constants,
-                f"blockchain_test_{i}.db",
-                shared_b_tools.config["self_hostname"],
-                b_tools if i == 0 else b_tools_1,
-                introducer_server._port,
-                False,
-                10,
-                True,
-                connect_to_daemon=connect_to_daemon,
-                db_version=db_version,
-            )
-            for i in range(2)
-        ]
+        await _teardown_nodes(node_iters)
 
-        nodes = [await fni.__anext__() for fni in full_node_iters]
-        node_apis = [fni._api for fni in nodes]
-        full_node_0_port = node_apis[0].full_node.server.get_port()
 
-        farmer_iter = setup_farmer(
-            shared_b_tools,
-            shared_b_tools.root_path / "harvester",
+async def setup_full_system_connect_to_deamon(
+    consensus_constants: ConsensusConstants,
+    shared_b_tools: BlockTools,
+    b_tools: Optional[BlockTools] = None,
+    b_tools_1: Optional[BlockTools] = None,
+    db_version: int = 1,
+) -> AsyncGenerator[
+    Tuple[
+        Any,
+        Any,
+        Harvester,
+        Farmer,
+        Any,
+        Service[Timelord, TimelordAPI],
+        object,
+        object,
+        Any,
+        ChiaServer,
+        Optional[WebSocketServer],
+    ],
+    None,
+]:
+    with TempKeyring(populate=True) as keychain1, TempKeyring(populate=True) as keychain2:
+        daemon_ws, node_iters, ret = await setup_full_system_inner(
+            b_tools, b_tools_1, True, consensus_constants, db_version, keychain1, keychain2, shared_b_tools
+        )
+
+        yield ret + (daemon_ws,)
+        await _teardown_nodes(node_iters[:-1])
+        await _teardown_nodes([node_iters[-1]])
+
+
+async def setup_full_system_inner(
+    b_tools: Optional[BlockTools],
+    b_tools_1: Optional[BlockTools],
+    connect_to_daemon: bool,
+    consensus_constants: ConsensusConstants,
+    db_version: int,
+    keychain1: Keychain,
+    keychain2: Keychain,
+    shared_b_tools: BlockTools,
+) -> Tuple[
+    Optional[WebSocketServer],
+    List[AsyncGenerator[object, None]],
+    Tuple[Any, Any, Harvester, Farmer, Any, Service[Timelord, TimelordAPI], object, object, Any, ChiaServer],
+]:
+    if b_tools is None:
+        b_tools = await create_block_tools_async(constants=consensus_constants, keychain=keychain1)
+    if b_tools_1 is None:
+        b_tools_1 = await create_block_tools_async(constants=consensus_constants, keychain=keychain2)
+    daemon_ws = None
+    if connect_to_daemon:
+        daemon_iter = setup_daemon(btools=b_tools)
+        daemon_ws = await daemon_iter.__anext__()
+    # Start the introducer first so we can find out the port, and use that for the nodes
+    introducer_iter = setup_introducer(shared_b_tools, uint16(0))
+    introducer_service = await introducer_iter.__anext__()
+    introducer = introducer_service._api
+    introducer_server = introducer_service._node.server
+    # Then start the full node so we can use the port for the farmer and timelord
+    full_node_iters = [
+        setup_full_node(
+            consensus_constants,
+            f"blockchain_test_{i}.db",
             shared_b_tools.config["self_hostname"],
-            consensus_constants,
-            full_node_0_port,
+            b_tools if i == 0 else b_tools_1,
+            introducer_server._port,
+            False,
+            10,
+            True,
+            connect_to_daemon=connect_to_daemon,
+            db_version=db_version,
         )
-        farmer_service = await farmer_iter.__anext__()
+        for i in range(2)
+    ]
+    nodes = [await fni.__anext__() for fni in full_node_iters]
+    node_apis = [fni._api for fni in nodes]
+    full_node_0_port = node_apis[0].full_node.server.get_port()
+    farmer_iter = setup_farmer(
+        shared_b_tools,
+        shared_b_tools.root_path / "harvester",
+        shared_b_tools.config["self_hostname"],
+        consensus_constants,
+        full_node_0_port,
+    )
+    farmer_service = await farmer_iter.__anext__()
+    harvester_iter = setup_harvester(
+        shared_b_tools,
+        shared_b_tools.root_path / "harvester",
+        UnresolvedPeerInfo(shared_b_tools.config["self_hostname"], farmer_service._server.get_port()),
+        consensus_constants,
+    )
+    vdf1_port = uint16(find_available_listen_port("vdf1"))
+    vdf2_port = uint16(find_available_listen_port("vdf2"))
+    timelord_iter = setup_timelord(full_node_0_port, False, consensus_constants, b_tools, vdf_port=vdf1_port)
+    timelord_bluebox_iter = setup_timelord(uint16(1000), True, consensus_constants, b_tools_1, vdf_port=vdf2_port)
+    harvester_service = await harvester_iter.__anext__()
+    harvester = harvester_service._node
 
-        harvester_iter = setup_harvester(
-            shared_b_tools,
-            shared_b_tools.root_path / "harvester",
-            PeerInfo(shared_b_tools.config["self_hostname"], farmer_service._server.get_port()),
-            consensus_constants,
-        )
+    async def num_connections() -> int:
+        count = len(harvester.server.all_connections.items())
+        return count
 
-        vdf1_port = uint16(find_available_listen_port("vdf1"))
-        vdf2_port = uint16(find_available_listen_port("vdf2"))
-        timelord_iter = setup_timelord(full_node_0_port, False, consensus_constants, b_tools, vdf_port=vdf1_port)
-        timelord_bluebox_iter = setup_timelord(uint16(1000), True, consensus_constants, b_tools_1, vdf_port=vdf2_port)
-
-        harvester_service = await harvester_iter.__anext__()
-        harvester = harvester_service._node
-
-        async def num_connections() -> int:
-            count = len(harvester.server.all_connections.items())
-            return count
-
-        await time_out_assert_custom_interval(10, 3, num_connections, 1)
-
-        node_iters = [
-            introducer_iter,
-            harvester_iter,
-            farmer_iter,
-            setup_vdf_clients(shared_b_tools, shared_b_tools.config["self_hostname"], vdf1_port),
-            timelord_iter,
-            full_node_iters[0],
-            full_node_iters[1],
-            setup_vdf_client(shared_b_tools, shared_b_tools.config["self_hostname"], vdf2_port),
-            timelord_bluebox_iter,
-        ]
-        if connect_to_daemon:
-            node_iters.append(daemon_iter)
-
-        timelord = await timelord_iter.__anext__()
-        vdf_clients = await node_iters[3].__anext__()
-        timelord_bluebox_service = await timelord_bluebox_iter.__anext__()
-        timelord_bluebox = timelord_bluebox_service._api
-        timelord_bluebox_server = timelord_bluebox_service._node.server
-        vdf_bluebox_clients = await node_iters[7].__anext__()
-
-        ret = (
-            node_apis[0],
-            node_apis[1],
-            harvester,
-            farmer_service._node,
-            introducer,
-            timelord,
-            vdf_clients,
-            vdf_bluebox_clients,
-            timelord_bluebox,
-            timelord_bluebox_server,
-        )
-
-        if connect_to_daemon:
-            yield ret + (daemon_ws,)
-        else:
-            yield ret
-
-        if connect_to_daemon:
-            await _teardown_nodes(node_iters[:-1])
-            await _teardown_nodes([node_iters[-1]])
-        else:
-            await _teardown_nodes(node_iters)
+    await time_out_assert_custom_interval(10, 3, num_connections, 1)
+    node_iters = [
+        introducer_iter,
+        harvester_iter,
+        farmer_iter,
+        setup_vdf_clients(shared_b_tools, shared_b_tools.config["self_hostname"], vdf1_port),
+        timelord_iter,
+        full_node_iters[0],
+        full_node_iters[1],
+        setup_vdf_client(shared_b_tools, shared_b_tools.config["self_hostname"], vdf2_port),
+        timelord_bluebox_iter,
+    ]
+    if connect_to_daemon:
+        node_iters.append(daemon_iter)
+    timelord = await timelord_iter.__anext__()
+    vdf_clients = await node_iters[3].__anext__()
+    timelord_bluebox_service = await timelord_bluebox_iter.__anext__()
+    timelord_bluebox = timelord_bluebox_service._api
+    timelord_bluebox_server = timelord_bluebox_service._node.server
+    vdf_bluebox_clients = await node_iters[7].__anext__()
+    ret = (
+        node_apis[0],
+        node_apis[1],
+        harvester,
+        farmer_service._node,
+        introducer,
+        timelord,
+        vdf_clients,
+        vdf_bluebox_clients,
+        timelord_bluebox,
+        timelord_bluebox_server,
+    )
+    return daemon_ws, node_iters, ret

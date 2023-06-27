@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, cast
 
 from bitstring import BitArray
 from blspy import AugSchemeMPL, G1Element, PrivateKey
@@ -44,26 +44,26 @@ def verify_and_get_quality_string(
 ) -> Optional[bytes32]:
     # Exactly one of (pool_public_key, pool_contract_puzzle_hash) must not be None
     if (pos.pool_public_key is None) and (pos.pool_contract_puzzle_hash is None):
-        log.error("Fail 1")
+        log.error("Expected pool public key or pool contract puzzle hash but got neither")
         return None
     if (pos.pool_public_key is not None) and (pos.pool_contract_puzzle_hash is not None):
-        log.error("Fail 2")
+        log.error("Expected pool public key or pool contract puzzle hash but got both")
         return None
     if pos.size < constants.MIN_PLOT_SIZE:
-        log.error("Fail 3")
+        log.error("Plot size is lower than the minimum")
         return None
     if pos.size > constants.MAX_PLOT_SIZE:
-        log.error("Fail 4")
+        log.error("Plot size is higher than the maximum")
         return None
     plot_id: bytes32 = get_plot_id(pos)
     new_challenge: bytes32 = calculate_pos_challenge(plot_id, original_challenge_hash, signage_point)
 
     if new_challenge != pos.challenge:
-        log.error("New challenge is not challenge")
+        log.error("Calculated pos challenge doesn't match the provided one")
         return None
 
     if not passes_plot_filter(constants, plot_id, original_challenge_hash, signage_point):
-        log.error("Fail 5")
+        log.error("Did not pass the plot filter")
         return None
 
     return get_quality_string(pos, plot_id)
@@ -82,8 +82,9 @@ def passes_plot_filter(
     challenge_hash: bytes32,
     signage_point: bytes32,
 ) -> bool:
-    plot_filter: BitArray = BitArray(calculate_plot_filter_input(plot_id, challenge_hash, signage_point))
-    return plot_filter[: constants.NUMBER_ZERO_BITS_PLOT_FILTER].uint == 0
+    plot_filter = BitArray(calculate_plot_filter_input(plot_id, challenge_hash, signage_point))
+    # TODO: compensating for https://github.com/scott-griffiths/bitstring/issues/248
+    return cast(bool, plot_filter[: constants.NUMBER_ZERO_BITS_PLOT_FILTER].uint == 0)
 
 
 def calculate_plot_filter_input(plot_id: bytes32, challenge_hash: bytes32, signage_point: bytes32) -> bytes32:

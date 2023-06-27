@@ -1,69 +1,69 @@
 from __future__ import annotations
-import asyncio
+
 import dataclasses
 import logging
 import time
-from typing import cast, Any, Optional, Set, Tuple, List, Dict, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Set, Tuple, cast
+
+from blspy import G1Element, G2Element, PrivateKey
 from typing_extensions import final
 
-from blspy import PrivateKey, G2Element, G1Element
-
 from chia.pools.pool_config import PoolWalletConfig, load_pool_config, update_pool_config
+from chia.pools.pool_puzzles import (
+    SINGLETON_LAUNCHER,
+    create_absorb_spend,
+    create_full_puzzle,
+    create_pooling_inner_puzzle,
+    create_travel_spend,
+    create_waiting_room_inner_puzzle,
+    get_delayed_puz_info_from_launcher_spend,
+    get_most_recent_singleton_coin_from_coin_spend,
+    is_pool_member_inner_puzzle,
+    is_pool_waitingroom_inner_puzzle,
+    launcher_id_to_p2_puzzle_hash,
+    pool_state_to_inner_puzzle,
+    solution_to_pool_state,
+    uncurry_pool_member_inner_puzzle,
+    uncurry_pool_waitingroom_inner_puzzle,
+)
 from chia.pools.pool_wallet_info import (
-    PoolWalletInfo,
+    FARMING_TO_POOL,
+    LEAVING_POOL,
+    SELF_POOLING,
     PoolSingletonState,
     PoolState,
-    FARMING_TO_POOL,
-    SELF_POOLING,
-    LEAVING_POOL,
+    PoolWalletInfo,
     create_pool_state,
 )
 from chia.protocols.pool_protocol import POOL_PROTOCOL_VERSION
-
 from chia.server.ws_connection import WSChiaConnection
 from chia.types.announcement import Announcement
 from chia.types.blockchain_format.coin import Coin
+from chia.types.blockchain_format.program import Program
+from chia.types.blockchain_format.serialized_program import SerializedProgram
 from chia.types.blockchain_format.sized_bytes import bytes32
-from chia.types.blockchain_format.program import Program, SerializedProgram
 from chia.types.coin_record import CoinRecord
-from chia.types.coin_spend import CoinSpend
+from chia.types.coin_spend import CoinSpend, compute_additions
 from chia.types.spend_bundle import SpendBundle
-
-from chia.pools.pool_puzzles import (
-    create_waiting_room_inner_puzzle,
-    create_full_puzzle,
-    SINGLETON_LAUNCHER,
-    create_pooling_inner_puzzle,
-    solution_to_pool_state,
-    pool_state_to_inner_puzzle,
-    get_most_recent_singleton_coin_from_coin_spend,
-    launcher_id_to_p2_puzzle_hash,
-    create_travel_spend,
-    uncurry_pool_member_inner_puzzle,
-    create_absorb_spend,
-    is_pool_member_inner_puzzle,
-    is_pool_waitingroom_inner_puzzle,
-    uncurry_pool_waitingroom_inner_puzzle,
-    get_delayed_puz_info_from_launcher_spend,
-)
-
-from chia.util.ints import uint8, uint32, uint64, uint128
-from chia.wallet.derive_keys import (
-    find_owner_sk,
-)
+from chia.util.ints import uint32, uint64, uint128
+from chia.wallet.derive_keys import find_owner_sk
 from chia.wallet.sign_coin_spends import sign_coin_spends
 from chia.wallet.transaction_record import TransactionRecord
+from chia.wallet.util.transaction_type import TransactionType
 from chia.wallet.util.wallet_types import WalletType
 from chia.wallet.wallet import Wallet
 from chia.wallet.wallet_coin_record import WalletCoinRecord
-
 from chia.wallet.wallet_info import WalletInfo
-from chia.wallet.util.transaction_type import TransactionType
 
 
 @final
 @dataclasses.dataclass
 class PoolWallet:
+    if TYPE_CHECKING:
+        from chia.wallet.wallet_protocol import WalletProtocol
+
+        _protocol_check: ClassVar[WalletProtocol] = cast("PoolWallet", None)
+
     MINIMUM_INITIAL_BALANCE = 1
     MINIMUM_RELATIVE_LOCK_HEIGHT = 5
     MAXIMUM_RELATIVE_LOCK_HEIGHT = 1000
@@ -77,7 +77,6 @@ class PoolWallet:
     next_transaction_fee: uint64 = uint64(0)
     target_state: Optional[PoolState] = None
     _owner_sk_and_index: Optional[Tuple[PrivateKey, uint32]] = None
-    _update_pool_config_after_sync_task: Optional[asyncio.Task] = None
 
     """
     From the user's perspective, this is not a wallet at all, but a way to control
@@ -125,14 +124,14 @@ class PoolWallet:
     """
 
     @classmethod
-    def type(cls) -> uint8:
-        return uint8(WalletType.POOLING_WALLET)
+    def type(cls) -> WalletType:
+        return WalletType.POOLING_WALLET
 
-    def id(self):
+    def id(self) -> uint32:
         return self.wallet_info.id
 
     @classmethod
-    def _verify_self_pooled(cls, state) -> Optional[str]:
+    def _verify_self_pooled(cls, state: PoolState) -> Optional[str]:
         err = ""
         if state.pool_url not in [None, ""]:
             err += " Unneeded pool_url for self-pooling"
@@ -143,7 +142,7 @@ class PoolWallet:
         return None if err == "" else err
 
     @classmethod
-    def _verify_pooling_state(cls, state) -> Optional[str]:
+    def _verify_pooling_state(cls, state: PoolState) -> Optional[str]:
         err = ""
         if state.relative_lock_height < cls.MINIMUM_RELATIVE_LOCK_HEIGHT:
             err += (
@@ -172,15 +171,18 @@ class PoolWallet:
                 f"to use this pooling wallet"
             )
 
-        if state.state == PoolSingletonState.SELF_POOLING:
+        if state.state == PoolSingletonState.SELF_POOLING.value:
             return cls._verify_self_pooled(state)
-        elif state.state == PoolSingletonState.FARMING_TO_POOL or state.state == PoolSingletonState.LEAVING_POOL:
+        elif (
+            state.state == PoolSingletonState.FARMING_TO_POOL.value
+            or state.state == PoolSingletonState.LEAVING_POOL.value
+        ):
             return cls._verify_pooling_state(state)
         else:
             return "Internal Error"
 
     @classmethod
-    def _verify_initial_target_state(cls, initial_target_state):
+    def _verify_initial_target_state(cls, initial_target_state: PoolState) -> None:
         err = cls._verify_pool_state(initial_target_state)
         if err:
             raise ValueError(f"Invalid internal Pool State: {err}: {initial_target_state}")
@@ -258,12 +260,6 @@ class PoolWallet:
         pool_config_dict[new_config.launcher_id] = new_config
         await update_pool_config(self.wallet_state_manager.root_path, list(pool_config_dict.values()))
 
-    @staticmethod
-    def get_next_interesting_coin(spend: CoinSpend) -> Optional[Coin]:
-        # CoinSpend of one of the coins that we cared about. This coin was spent in a block, but might be in a reorg
-        # If we return a value, it is a coin that we are also interested in (to support two transitions per block)
-        return get_most_recent_singleton_coin_from_coin_spend(spend)
-
     async def apply_state_transition(self, new_state: CoinSpend, block_height: uint32) -> bool:
         """
         Updates the Pool state (including DB) with new singleton spends.
@@ -302,26 +298,8 @@ class PoolWallet:
                     self.next_transaction_fee = uint64(0)
                 break
 
-        await self.update_pool_config_after_sync()  # Update pool config after we finish syncing.
+        await self.update_pool_config()
         return True
-
-    async def update_pool_config_after_sync(self) -> None:
-        """
-        Updates the pool config file with the current state after sync is complete.
-        If the wallet crashes, the config file will be auto updated on restart.
-        """
-        # we only need one task running at a time.
-        if self._update_pool_config_after_sync_task is None or self._update_pool_config_after_sync_task.done():
-
-            async def update_pool_config_after_sync_task():
-                synced = await self.wallet_state_manager.synced()
-                while not synced:
-                    await asyncio.sleep(5)  # we sync pretty quickly, so I think this is ok.
-                    synced = await self.wallet_state_manager.synced()
-                await self.update_pool_config()
-                self.log.info("Updated pool config after syncing finished.")
-
-            self._update_pool_config_after_sync_task = asyncio.create_task(update_pool_config_after_sync_task())
 
     async def rewind(self, block_height: int) -> bool:
         """
@@ -354,7 +332,7 @@ class PoolWallet:
         block_spends: List[CoinSpend],
         block_height: uint32,
         *,
-        name: str = None,
+        name: Optional[str] = None,
     ) -> PoolWallet:
         """
         This creates a new PoolWallet with only one spend: the launcher spend. The DB MUST be committed after calling
@@ -381,7 +359,7 @@ class PoolWallet:
         await pool_wallet.update_pool_config()
 
         p2_puzzle_hash: bytes32 = (await pool_wallet.get_current_state()).p2_singleton_puzzle_hash
-        await wallet_state_manager.add_new_wallet(pool_wallet, pool_wallet.wallet_id, create_puzzle_hashes=False)
+        await wallet_state_manager.add_new_wallet(pool_wallet)
         await wallet_state_manager.add_interested_puzzle_hashes([p2_puzzle_hash], [pool_wallet.wallet_id])
 
         return pool_wallet
@@ -392,7 +370,7 @@ class PoolWallet:
         wallet_state_manager: Any,
         wallet: Wallet,
         wallet_info: WalletInfo,
-        name: str = None,
+        name: Optional[str] = None,
     ) -> PoolWallet:
         """
         This creates a PoolWallet from DB. However, all data is already handled by WalletPoolStore, so we don't need
@@ -405,7 +383,6 @@ class PoolWallet:
             wallet_id=wallet_info.id,
             standard_wallet=wallet,
         )
-        await pool_wallet.update_pool_config()
         return pool_wallet
 
     @staticmethod
@@ -511,7 +488,11 @@ class PoolWallet:
             self.wallet_state_manager.constants.MAX_BLOCK_COST_CLVM,
         )
 
-    async def generate_fee_transaction(self, fee: uint64, coin_announcements=None) -> TransactionRecord:
+    async def generate_fee_transaction(
+        self,
+        fee: uint64,
+        coin_announcements: Optional[Set[Announcement]] = None,
+    ) -> TransactionRecord:
         fee_tx = await self.standard_wallet.generate_signed_transaction(
             uint64(0),
             (await self.standard_wallet.get_new_puzzlehash()),
@@ -524,7 +505,7 @@ class PoolWallet:
         )
         return fee_tx
 
-    async def publish_transactions(self, travel_tx: TransactionRecord, fee_tx: Optional[TransactionRecord]):
+    async def publish_transactions(self, travel_tx: TransactionRecord, fee_tx: Optional[TransactionRecord]) -> None:
         # We create two transaction records, one for the pool wallet to keep track of the travel TX, and another
         # for the standard wallet to keep track of the fee. However, we will only submit the first one to the
         # blockchain, and this one has the fee inside it as well.
@@ -544,7 +525,7 @@ class PoolWallet:
         delayed_seconds, delayed_puzhash = get_delayed_puz_info_from_launcher_spend(spend_history[0][1])
         assert pool_wallet_info.target is not None
         next_state = pool_wallet_info.target
-        if pool_wallet_info.current.state in [FARMING_TO_POOL]:
+        if pool_wallet_info.current.state == FARMING_TO_POOL.value:
             next_state = create_pool_state(
                 LEAVING_POOL,
                 pool_wallet_info.current.target_puzzle_hash,
@@ -576,7 +557,7 @@ class PoolWallet:
 
         tip = (await self.get_tip())[1]
         tip_coin = tip.coin
-        singleton = tip.additions()[0]
+        singleton = compute_additions(tip)[0]
         singleton_id = singleton.name()
         assert outgoing_coin_spend.coin.parent_coin_info == tip_coin.name()
         assert outgoing_coin_spend.coin.name() == singleton_id
@@ -614,6 +595,7 @@ class PoolWallet:
         fee_tx: Optional[TransactionRecord] = None
         if fee > 0:
             fee_tx = await self.generate_fee_transaction(fee)
+            assert fee_tx.spend_bundle is not None
             signed_spend_bundle = SpendBundle.aggregate([signed_spend_bundle, fee_tx.spend_bundle])
 
         tx_record = TransactionRecord(
@@ -681,9 +663,9 @@ class PoolWallet:
             delay_ph,
         )
 
-        if initial_target_state.state == SELF_POOLING:
+        if initial_target_state.state == SELF_POOLING.value:
             puzzle = escaping_inner_puzzle
-        elif initial_target_state.state == FARMING_TO_POOL:
+        elif initial_target_state.state == FARMING_TO_POOL.value:
             puzzle = self_pooling_inner_puzzle
         else:
             raise ValueError("Invalid initial state")
@@ -699,11 +681,11 @@ class PoolWallet:
             amount,
             genesis_launcher_puz.get_tree_hash(),
             fee,
-            launcher_parent.name(),
             coins,
             None,
             False,
             announcement_set,
+            origin_id=launcher_parent.name(),
         )
         assert create_launcher_tx_record is not None and create_launcher_tx_record.spend_bundle is not None
 
@@ -723,7 +705,7 @@ class PoolWallet:
     async def join_pool(
         self, target_state: PoolState, fee: uint64
     ) -> Tuple[uint64, TransactionRecord, Optional[TransactionRecord]]:
-        if target_state.state != FARMING_TO_POOL:
+        if target_state.state != FARMING_TO_POOL.value:
             raise ValueError(f"join_pool must be called with target_state={FARMING_TO_POOL} (FARMING_TO_POOL)")
         if self.target_state is not None:
             raise ValueError(f"Cannot join a pool while waiting for target state: {self.target_state}")
@@ -740,9 +722,9 @@ class PoolWallet:
             msg = f"Asked to change to current state. Target = {target_state}"
             self.log.info(msg)
             raise ValueError(msg)
-        elif current_state.current.state in [SELF_POOLING, LEAVING_POOL]:
+        elif current_state.current.state in [SELF_POOLING.value, LEAVING_POOL.value]:
             total_fee = fee
-        elif current_state.current.state == FARMING_TO_POOL:
+        elif current_state.current.state == FARMING_TO_POOL.value:
             total_fee = uint64(fee * 2)
 
         if self.target_state is not None:
@@ -750,7 +732,7 @@ class PoolWallet:
                 f"Cannot change to state {target_state} when already having target state: {self.target_state}"
             )
         PoolWallet._verify_initial_target_state(target_state)
-        if current_state.current.state == LEAVING_POOL:
+        if current_state.current.state == LEAVING_POOL.value:
             history: List[Tuple[uint32, CoinSpend]] = await self.get_spend_history()
             last_height: uint32 = history[-1][0]
             if (
@@ -772,7 +754,7 @@ class PoolWallet:
                 "Cannot self pool due to unconfirmed transaction. If this is stuck, delete the unconfirmed transaction."
             )
         pool_wallet_info: PoolWalletInfo = await self.get_current_state()
-        if pool_wallet_info.current.state == SELF_POOLING:
+        if pool_wallet_info.current.state == SELF_POOLING.value:
             raise ValueError("Attempted to self pool when already self pooling")
 
         if self.target_state is not None:
@@ -785,7 +767,7 @@ class PoolWallet:
         current_state: PoolWalletInfo = await self.get_current_state()
         total_fee = uint64(fee * 2)
 
-        if current_state.current.state == LEAVING_POOL:
+        if current_state.current.state == LEAVING_POOL.value:
             total_fee = fee
             history: List[Tuple[uint32, CoinSpend]] = await self.get_spend_history()
             last_height: uint32 = history[-1][0]
@@ -881,7 +863,9 @@ class PoolWallet:
         fee_tx = None
         if fee > 0:
             absorb_announce = Announcement(first_coin_record.coin.name(), b"$")
-            fee_tx = await self.generate_fee_transaction(fee, coin_announcements=[absorb_announce])
+            assert absorb_announce is not None
+            fee_tx = await self.generate_fee_transaction(fee, coin_announcements={absorb_announce})
+            assert fee_tx.spend_bundle is not None
             full_spend = SpendBundle.aggregate([fee_tx.spend_bundle, claim_spend])
 
         assert full_spend.fees() == fee
@@ -917,13 +901,13 @@ class PoolWallet:
 
         if self.target_state is None:
             return
-        if self.target_state == pool_wallet_info.current.state:
+        if self.target_state == pool_wallet_info.current:
             self.target_state = None
-            raise ValueError("Internal error")
+            raise ValueError(f"Internal error. Pool wallet {self.wallet_id} state: {pool_wallet_info.current}")
 
         if (
-            self.target_state.state in [FARMING_TO_POOL, SELF_POOLING]
-            and pool_wallet_info.current.state == LEAVING_POOL
+            self.target_state.state in [FARMING_TO_POOL.value, SELF_POOLING.value]
+            and pool_wallet_info.current.state == LEAVING_POOL.value
         ):
             leave_height = tip_height + pool_wallet_info.current.relative_lock_height
 
@@ -941,13 +925,13 @@ class PoolWallet:
 
                 self.log.info(f"Attempting to leave from\n{pool_wallet_info.current}\nto\n{self.target_state}")
                 assert self.target_state.version == POOL_PROTOCOL_VERSION
-                assert pool_wallet_info.current.state == LEAVING_POOL
+                assert pool_wallet_info.current.state == LEAVING_POOL.value
                 assert self.target_state.target_puzzle_hash is not None
 
-                if self.target_state.state == SELF_POOLING:
+                if self.target_state.state == SELF_POOLING.value:
                     assert self.target_state.relative_lock_height == 0
                     assert self.target_state.pool_url is None
-                elif self.target_state.state == FARMING_TO_POOL:
+                elif self.target_state.state == FARMING_TO_POOL.value:
                     assert self.target_state.relative_lock_height >= self.MINIMUM_RELATIVE_LOCK_HEIGHT
                     assert self.target_state.pool_url is not None
 
@@ -959,9 +943,9 @@ class PoolWallet:
         )
         return len(unconfirmed) > 0
 
-    async def get_confirmed_balance(self, _=None) -> uint128:
+    async def get_confirmed_balance(self, _: Optional[object] = None) -> uint128:
         amount: uint128 = uint128(0)
-        if (await self.get_current_state()).current.state == SELF_POOLING:
+        if (await self.get_current_state()).current.state == SELF_POOLING.value:
             unspent_coin_records: List[WalletCoinRecord] = list(
                 await self.wallet_state_manager.coin_store.get_unspent_coins_for_wallet(self.wallet_id)
             )
@@ -970,10 +954,10 @@ class PoolWallet:
                     amount = uint128(amount + record.coin.amount)
         return amount
 
-    async def get_unconfirmed_balance(self, record_list=None) -> uint128:
+    async def get_unconfirmed_balance(self, record_list: Optional[object] = None) -> uint128:
         return await self.get_confirmed_balance(record_list)
 
-    async def get_spendable_balance(self, record_list=None) -> uint128:
+    async def get_spendable_balance(self, record_list: Optional[object] = None) -> uint128:
         return await self.get_confirmed_balance(record_list)
 
     async def get_pending_change_balance(self) -> uint64:
@@ -1001,8 +985,5 @@ class PoolWallet:
     def puzzle_hash_for_pk(self, pubkey: G1Element) -> bytes32:
         raise RuntimeError("PoolWallet does not support puzzle_hash_for_pk")
 
-
-if TYPE_CHECKING:
-    from chia.wallet.wallet_protocol import WalletProtocol
-
-    _dummy: WalletProtocol = cast(PoolWallet, None)
+    def get_name(self) -> str:
+        return self.wallet_info.name

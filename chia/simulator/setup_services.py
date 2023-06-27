@@ -1,37 +1,64 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import signal
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from secrets import token_bytes
-from typing import Any, AsyncGenerator, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Tuple
 
 from chia.cmds.init_funcs import init
 from chia.consensus.constants import ConsensusConstants
 from chia.daemon.server import WebSocketServer, daemon_launch_lock_path
-from chia.data_layer.data_layer_api import DataLayerAPI
+from chia.farmer.farmer import Farmer
+from chia.farmer.farmer_api import FarmerAPI
+from chia.full_node.full_node import FullNode
+from chia.full_node.full_node_api import FullNodeAPI
+from chia.harvester.harvester import Harvester
+from chia.harvester.harvester_api import HarvesterAPI
+from chia.introducer.introducer import Introducer
+from chia.introducer.introducer_api import IntroducerAPI
 from chia.protocols.shared_protocol import Capability, capabilities
-from chia.server.start_data_layer import create_data_layer_service
+from chia.seeder.crawler import Crawler
+from chia.seeder.crawler_api import CrawlerAPI
+from chia.seeder.start_crawler import create_full_node_crawler_service
 from chia.server.start_farmer import create_farmer_service
 from chia.server.start_full_node import create_full_node_service
 from chia.server.start_harvester import create_harvester_service
 from chia.server.start_introducer import create_introducer_service
+from chia.server.start_service import Service
 from chia.server.start_timelord import create_timelord_service
 from chia.server.start_wallet import create_wallet_service
 from chia.simulator.block_tools import BlockTools
 from chia.simulator.keyring import TempKeyring
 from chia.simulator.start_simulator import create_full_node_simulator_service
+from chia.timelord.timelord import Timelord
+from chia.timelord.timelord_api import TimelordAPI
 from chia.timelord.timelord_launcher import kill_processes, spawn_process
-from chia.types.peer_info import PeerInfo
+from chia.types.peer_info import UnresolvedPeerInfo
 from chia.util.bech32m import encode_puzzle_hash
-from chia.util.config import lock_and_load_config, save_config
+from chia.util.config import config_path_for_filename, lock_and_load_config, save_config
 from chia.util.ints import uint16
 from chia.util.keychain import bytes_to_mnemonic
 from chia.util.lock import Lockfile
+from chia.wallet.wallet_node import WalletNode
+from chia.wallet.wallet_node_api import WalletNodeAPI
 
 log = logging.getLogger(__name__)
+
+
+@contextmanager
+def create_lock_and_load_config(certs_path: Path, root_path: Path) -> Iterator[Dict[str, Any]]:
+    init(None, root_path)
+    init(certs_path, root_path)
+    path = config_path_for_filename(root_path=root_path, filename="config.yaml")
+    # Using localhost leads to flakiness on CI
+    path.write_text(path.read_text().replace("localhost", "127.0.0.1"))
+    with lock_and_load_config(root_path, "config.yaml") as config:
+        yield config
 
 
 def get_capabilities(disable_capabilities_values: Optional[List[Capability]]) -> List[Tuple[uint16, str]]:
@@ -63,13 +90,9 @@ async def setup_daemon(btools: BlockTools) -> AsyncGenerator[WebSocketServer, No
     ca_crt_path = root_path / config["private_ssl_ca"]["crt"]
     ca_key_path = root_path / config["private_ssl_ca"]["key"]
     with Lockfile.create(daemon_launch_lock_path(root_path)):
-        shutdown_event = asyncio.Event()
-        ws_server = WebSocketServer(root_path, ca_crt_path, ca_key_path, crt_path, key_path, shutdown_event)
-        await ws_server.start()
-
-        yield ws_server
-
-        await ws_server.stop()
+        ws_server = WebSocketServer(root_path, ca_crt_path, ca_key_path, crt_path, key_path)
+        async with ws_server.run():
+            yield ws_server
 
 
 async def setup_full_node(
@@ -77,16 +100,20 @@ async def setup_full_node(
     db_name: str,
     self_hostname: str,
     local_bt: BlockTools,
-    introducer_port: Optional[uint16] = None,
+    introducer_port: Optional[int] = None,
     simulator: bool = False,
     send_uncompact_interval: int = 0,
     sanitize_weight_proof_only: bool = False,
     connect_to_daemon: bool = False,
     db_version: int = 1,
     disable_capabilities: Optional[List[Capability]] = None,
-):
+    *,
+    reuse_db: bool = False,
+) -> AsyncGenerator[Service[FullNode, FullNodeAPI], None]:
     db_path = local_bt.root_path / f"{db_name}"
-    if db_path.exists():
+    if not reuse_db and db_path.exists():
+        # TODO: remove (maybe) when fixed https://github.com/python/cpython/issues/97641
+        gc.collect()
         db_path.unlink()
 
         if db_version > 1:
@@ -100,6 +127,7 @@ async def setup_full_node(
     config = local_bt.config
     service_config = config["full_node"]
     service_config["database_path"] = db_name
+    service_config["testing"] = True
     service_config["send_uncompact_interval"] = send_uncompact_interval
     service_config["target_uncompact_proofs"] = 30
     service_config["peer_connect_interval"] = 50
@@ -140,8 +168,36 @@ async def setup_full_node(
 
     service.stop()
     await service.wait_closed()
-    if db_path.exists():
+    if not reuse_db and db_path.exists():
+        # TODO: remove (maybe) when fixed https://github.com/python/cpython/issues/97641
+        gc.collect()
         db_path.unlink()
+
+
+async def setup_crawler(
+    bt: BlockTools,
+) -> AsyncGenerator[Service[Crawler, CrawlerAPI], None]:
+    config = bt.config
+    service_config = config["seeder"]
+    service_config["selected_network"] = "testnet0"
+    service_config["port"] = 0
+    service_config["start_rpc_server"] = False
+    overrides = service_config["network_overrides"]["constants"][service_config["selected_network"]]
+    updated_constants = bt.constants.replace_str_to_bytes(**overrides)
+    bt.change_config(config)
+    service = create_full_node_crawler_service(
+        bt.root_path,
+        config,
+        updated_constants,
+        connect_to_daemon=False,
+    )
+    await service.start()
+
+    try:
+        yield service
+    finally:
+        service.stop()
+        await service.wait_closed()
 
 
 # Note: convert these setup functions to fixtures, or push it one layer up,
@@ -156,10 +212,11 @@ async def setup_wallet_node(
     introducer_port: Optional[uint16] = None,
     key_seed: Optional[bytes] = None,
     initial_num_public_keys: int = 5,
-):
+) -> AsyncGenerator[Service[WalletNode, WalletNodeAPI], None]:
     with TempKeyring(populate=True) as keychain:
         config = local_bt.config
         service_config = config["wallet"]
+        service_config["testing"] = True
         service_config["port"] = 0
         service_config["rpc_port"] = 0
         service_config["initial_num_public_keys"] = initial_num_public_keys
@@ -178,6 +235,8 @@ async def setup_wallet_node(
         db_path = local_bt.root_path / db_path_replaced
 
         if db_path.exists():
+            # TODO: remove (maybe) when fixed https://github.com/python/cpython/issues/97641
+            gc.collect()
             db_path.unlink()
         service_config["database_path"] = str(db_name)
         service_config["testing"] = True
@@ -211,6 +270,8 @@ async def setup_wallet_node(
         service.stop()
         await service.wait_closed()
         if db_path.exists():
+            # TODO: remove (maybe) when fixed https://github.com/python/cpython/issues/97641
+            gc.collect()
             db_path.unlink()
         keychain.delete_all_keys()
 
@@ -218,13 +279,11 @@ async def setup_wallet_node(
 async def setup_harvester(
     b_tools: BlockTools,
     root_path: Path,
-    farmer_peer: Optional[PeerInfo],
+    farmer_peer: Optional[UnresolvedPeerInfo],
     consensus_constants: ConsensusConstants,
     start_service: bool = True,
-):
-    init(None, root_path)
-    init(b_tools.root_path / "config" / "ssl" / "ca", root_path)
-    with lock_and_load_config(root_path, "config.yaml") as config:
+) -> AsyncGenerator[Service[Harvester, HarvesterAPI], None]:
+    with create_lock_and_load_config(b_tools.root_path / "config" / "ssl" / "ca", root_path) as config:
         config["logging"]["log_stdout"] = True
         config["selected_network"] = "testnet0"
         config["harvester"]["selected_network"] = "testnet0"
@@ -257,10 +316,8 @@ async def setup_farmer(
     full_node_port: Optional[uint16] = None,
     start_service: bool = True,
     port: uint16 = uint16(0),
-):
-    init(None, root_path)
-    init(b_tools.root_path / "config" / "ssl" / "ca", root_path)
-    with lock_and_load_config(root_path, "config.yaml") as root_config:
+) -> AsyncGenerator[Service[Farmer, FarmerAPI], None]:
+    with create_lock_and_load_config(b_tools.root_path / "config" / "ssl" / "ca", root_path) as root_config:
         root_config["logging"]["log_stdout"] = True
         root_config["selected_network"] = "testnet0"
         root_config["farmer"]["selected_network"] = "testnet0"
@@ -298,7 +355,7 @@ async def setup_farmer(
     await service.wait_closed()
 
 
-async def setup_introducer(bt: BlockTools, port):
+async def setup_introducer(bt: BlockTools, port: int) -> AsyncGenerator[Service[Introducer, IntroducerAPI], None]:
     service = create_introducer_service(
         bt.root_path,
         bt.config,
@@ -314,9 +371,11 @@ async def setup_introducer(bt: BlockTools, port):
     await service.wait_closed()
 
 
-async def setup_vdf_client(bt: BlockTools, self_hostname: str, port: uint16) -> AsyncGenerator[asyncio.Task[Any], None]:
+async def setup_vdf_client(bt: BlockTools, self_hostname: str, port: int) -> AsyncGenerator[asyncio.Task[Any], None]:
     lock = asyncio.Lock()
-    vdf_task_1 = asyncio.create_task(spawn_process(self_hostname, port, 1, lock, bt.config.get("prefer_ipv6")))
+    vdf_task_1 = asyncio.create_task(
+        spawn_process(self_hostname, port, 1, lock, prefer_ipv6=bt.config.get("prefer_ipv6", False))
+    )
 
     def stop() -> None:
         asyncio.create_task(kill_processes(lock))
@@ -329,12 +388,18 @@ async def setup_vdf_client(bt: BlockTools, self_hostname: str, port: uint16) -> 
 
 
 async def setup_vdf_clients(
-    bt: BlockTools, self_hostname: str, port: uint16
+    bt: BlockTools, self_hostname: str, port: int
 ) -> AsyncGenerator[Tuple[asyncio.Task[Any], asyncio.Task[Any], asyncio.Task[Any]], None]:
     lock = asyncio.Lock()
-    vdf_task_1 = asyncio.create_task(spawn_process(self_hostname, port, 1, lock, bt.config.get("prefer_ipv6")))
-    vdf_task_2 = asyncio.create_task(spawn_process(self_hostname, port, 2, lock, bt.config.get("prefer_ipv6")))
-    vdf_task_3 = asyncio.create_task(spawn_process(self_hostname, port, 3, lock, bt.config.get("prefer_ipv6")))
+    vdf_task_1 = asyncio.create_task(
+        spawn_process(self_hostname, port, 1, lock, prefer_ipv6=bt.config.get("prefer_ipv6", False))
+    )
+    vdf_task_2 = asyncio.create_task(
+        spawn_process(self_hostname, port, 2, lock, prefer_ipv6=bt.config.get("prefer_ipv6", False))
+    )
+    vdf_task_3 = asyncio.create_task(
+        spawn_process(self_hostname, port, 3, lock, prefer_ipv6=bt.config.get("prefer_ipv6", False))
+    )
 
     def stop() -> None:
         asyncio.create_task(kill_processes(lock))
@@ -348,12 +413,12 @@ async def setup_vdf_clients(
 
 
 async def setup_timelord(
-    full_node_port: uint16,
+    full_node_port: int,
     sanitizer: bool,
     consensus_constants: ConsensusConstants,
     b_tools: BlockTools,
     vdf_port: uint16 = uint16(0),
-):
+) -> AsyncGenerator[Service[Timelord, TimelordAPI], None]:
     config = b_tools.config
     service_config = config["timelord"]
     service_config["full_node_peer"]["port"] = full_node_port
@@ -373,36 +438,6 @@ async def setup_timelord(
     await service.start()
 
     yield service
-
-    service.stop()
-    await service.wait_closed()
-
-
-async def setup_data_layer(local_bt: BlockTools) -> AsyncGenerator[DataLayerAPI, None]:
-    # db_path = local_bt.root_path / f"{db_name}"
-    # if db_path.exists():
-    #     db_path.unlink()
-    config = local_bt.config["data_layer"]
-    # config["database_path"] = db_name
-    # if introducer_port is not None:
-    #     config["introducer_peer"]["host"] = self_hostname
-    #     config["introducer_peer"]["port"] = introducer_port
-    # else:
-    #     config["introducer_peer"] = None
-    # config["dns_servers"] = []
-    # config["rpc_port"] = port + 1000
-    # overrides = config["network_overrides"]["constants"][config["selected_network"]]
-    # updated_constants = consensus_constants.replace_str_to_bytes(**overrides)
-    # if simulator:
-    #     kwargs = service_kwargs_for_full_node_simulator(local_bt.root_path, config, local_bt)
-    # else:
-    #     kwargs = service_kwargs_for_full_node(local_bt.root_path, config, updated_constants)
-
-    service = create_data_layer_service(local_bt.root_path, config, connect_to_daemon=False)
-
-    await service.start()
-
-    yield service._api
 
     service.stop()
     await service.wait_closed()

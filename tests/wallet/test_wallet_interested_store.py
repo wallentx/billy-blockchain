@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from secrets import token_bytes
+
 import pytest
 
 from chia.types.blockchain_format.coin import Coin
 from chia.util.ints import uint64
-
 from chia.wallet.wallet_interested_store import WalletInterestedStore
 from tests.util.db_connection import DBConnection
 
@@ -22,6 +24,8 @@ class TestWalletInterestedStore:
             assert (await store.get_interested_coin_ids()) == [coin_1.name()]
             await store.add_interested_coin_id(coin_2.name())
             assert set(await store.get_interested_coin_ids()) == {coin_1.name(), coin_2.name()}
+            await store.remove_interested_coin_id(coin_1.name())
+            assert set(await store.get_interested_coin_ids()) == {coin_2.name()}
             puzzle_hash = token_bytes(32)
             assert len(await store.get_interested_puzzle_hashes()) == 0
 

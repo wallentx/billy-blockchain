@@ -32,8 +32,14 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	echo >&2 "pyinstaller failed!"
 	exit $LAST_EXIT_CODE
 fi
-cp -r dist/daemon ../chia-blockchain-gui/packages/gui
 
+
+# Creates a directory of licenses
+echo "Building pip and NPM license directory"
+pwd
+bash ./build_license_directory.sh
+
+cp -r dist/daemon ../chia-blockchain-gui/packages/gui
 # Change to the gui package
 cd ../chia-blockchain-gui/packages/gui || exit 1
 
@@ -52,6 +58,8 @@ if [ "$NOTARIZE" == true ]; then
 	echo "Setting credentials for signing"
 	export CSC_LINK=$APPLE_DEV_ID_APP
 	export CSC_KEY_PASSWORD=$APPLE_DEV_ID_APP_PASS
+	export PUBLISH_FOR_PULL_REQUEST=true
+	export CSC_FOR_PULL_REQUEST=true
 else
 	echo "Not on ci or no secrets so not signing"
 	export CSC_IDENTITY_AUTO_DISCOVERY=false
@@ -75,10 +83,10 @@ cd ../../../build_scripts || exit 1
 mkdir final_installer
 DMG_NAME="chia-${CHIA_INSTALLER_VERSION}.dmg"
 if [ "$(arch)" = "arm64" ]; then
-  mv dist/${DMG_NAME} dist/chia-${CHIA_INSTALLER_VERSION}-arm64.dmg
+  mv dist/"${DMG_NAME}" dist/chia-"${CHIA_INSTALLER_VERSION}"-arm64.dmg
   DMG_NAME=chia-${CHIA_INSTALLER_VERSION}-arm64.dmg
 fi
-mv dist/$DMG_NAME final_installer/
+mv dist/"$DMG_NAME" final_installer/
 
 ls -lh final_installer
 
