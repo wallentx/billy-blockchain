@@ -3,31 +3,44 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
 
 import aiohttp
+import pkg_resources
 import pytest
+from aiohttp.web_ws import WebSocketResponse
+from pytest_mock import MockerFixture
 
+from chia.daemon.client import connect_to_daemon
 from chia.daemon.keychain_server import (
     DeleteLabelRequest,
     GetKeyRequest,
     GetKeyResponse,
     GetKeysResponse,
+    GetPublicKeyResponse,
+    GetPublicKeysResponse,
     SetLabelRequest,
 )
 from chia.daemon.server import WebSocketServer, plotter_log_path, service_plotter
+from chia.plotters.plotters import call_plotters
 from chia.server.outbound_message import NodeType
 from chia.simulator.block_tools import BlockTools
+from chia.simulator.keyring import TempKeyring
 from chia.simulator.time_out_assert import time_out_assert, time_out_assert_custom_interval
 from chia.types.peer_info import PeerInfo
+from chia.util.config import load_config
 from chia.util.ints import uint16
 from chia.util.json_util import dict_to_json_str
 from chia.util.keychain import Keychain, KeyData, supports_os_passphrase_storage
-from chia.util.keyring_wrapper import DEFAULT_PASSPHRASE_IF_NO_MASTER_PASSPHRASE
+from chia.util.keyring_wrapper import DEFAULT_PASSPHRASE_IF_NO_MASTER_PASSPHRASE, KeyringWrapper
 from chia.util.ws_message import create_payload, create_payload_dict
+from chia.wallet.derive_keys import master_sk_to_farmer_sk, master_sk_to_pool_sk
 from tests.core.node_height import node_height_at_least
 from tests.util.misc import Marks, datacases
+
+chiapos_version = pkg_resources.get_distribution("chiapos").version
 
 
 @dataclass
@@ -41,6 +54,80 @@ class RouteCase:
     @property
     def id(self) -> str:
         return f"{self.route}: {self.description}"
+
+
+@dataclass
+class WalletAddressCase:
+    id: str
+    request: Dict[str, Any]
+    response: Dict[str, Any]
+    pubkeys_only: bool = field(default=False)
+    marks: Marks = ()
+
+
+@dataclass
+class KeysForPlotCase:
+    id: str
+    request: Dict[str, Any]
+    response: Dict[str, Any]
+    marks: Marks = ()
+
+
+@dataclass
+class ChiaPlottersBladebitArgsCase:
+    case_id: str
+    plot_type: str
+    count: int = 1
+    threads: int = 0
+    pool_contract: str = "txch1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    compress: int = 1
+    device: int = 0
+    hybrid_disk_mode: Optional[int] = None
+    farmer_pk: str = ""
+    final_dir: str = ""
+    marks: Marks = ()
+
+    @property
+    def id(self) -> str:
+        return self.case_id
+
+    def to_command_array(self) -> List[str]:
+        command: List[str] = ["bladebit", self.plot_type]
+        command += ["-r", str(self.threads)]
+        command += ["-n", str(self.count)]
+        command += ["-c", self.pool_contract]
+        command += ["-f", self.farmer_pk]
+        command += ["--compress", str(self.compress)]
+        if self.plot_type == "cudaplot":
+            command += ["--device", str(self.device)]
+            if self.hybrid_disk_mode is not None:
+                command += [f"--disk-{self.hybrid_disk_mode}"]
+        command += ["-d", str(self.final_dir)]
+
+        return command
+
+    def expected_raw_command_args(self):
+        raw_args = []
+        raw_args += [
+            "--threads",
+            str(self.threads),
+            "--count",
+            str(self.count),
+            "--farmer-key",
+            str(self.farmer_pk),
+            "--pool-contract",
+            str(self.pool_contract),
+        ]
+        # --compress is "1" by default
+        raw_args += ["--compress", str(self.compress) if self.compress is not None else "1"]
+        raw_args += [self.plot_type]
+        if self.plot_type == "cudaplot":
+            # --device is "0" by default
+            raw_args += ["--device", str(self.device) if self.device is not None else "0"]
+            if self.hybrid_disk_mode is not None:
+                raw_args += [f"--disk-{self.hybrid_disk_mode}"]
+        raw_args += [str(self.final_dir)]
+        return raw_args
 
 
 # Simple class that responds to a poll() call used by WebSocketServer.is_running()
@@ -59,6 +146,17 @@ class Daemon:
     services: Dict[str, Union[List[Service], Service]]
     connections: Dict[str, Optional[List[Any]]]
 
+    # Instance variables used by WebSocketServer.get_wallet_addresses()
+    net_config: Dict[str, Any] = field(default_factory=dict)
+
+    def get_command_mapping(self) -> Dict[str, Any]:
+        return {
+            "get_routes": None,
+            "example_one": None,
+            "example_two": None,
+            "example_three": None,
+        }
+
     def is_service_running(self, service_name: str) -> bool:
         return WebSocketServer.is_service_running(cast(WebSocketServer, self), service_name)
 
@@ -68,6 +166,21 @@ class Daemon:
     async def is_running(self, request: Dict[str, Any]) -> Dict[str, Any]:
         return await WebSocketServer.is_running(cast(WebSocketServer, self), request)
 
+    async def get_routes(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        return await WebSocketServer.get_routes(
+            cast(WebSocketServer, self), websocket=WebSocketResponse(), request=request
+        )
+
+    async def get_wallet_addresses(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        return await WebSocketServer.get_wallet_addresses(
+            cast(WebSocketServer, self), websocket=WebSocketResponse(), request=request
+        )
+
+    async def get_keys_for_plotting(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        return await WebSocketServer.get_keys_for_plotting(
+            cast(WebSocketServer, self), websocket=WebSocketResponse(), request=request
+        )
+
 
 test_key_data = KeyData.from_mnemonic(
     "grief lock ketchup video day owner torch young work "
@@ -76,6 +189,11 @@ test_key_data = KeyData.from_mnemonic(
 )
 test_key_data_no_secrets = replace(test_key_data, secrets=None)
 
+test_key_data_2 = KeyData.from_mnemonic(
+    "banana boat fragile ghost fortune beyond aerobic access "
+    "hammer stable page grunt venture purse canyon discover "
+    "egg vivid spare immune awake code announce message"
+)
 
 success_response_data = {
     "success": True,
@@ -136,6 +254,14 @@ def get_key_response_data(key: KeyData) -> Dict[str, object]:
 
 def get_keys_response_data(keys: List[KeyData]) -> Dict[str, object]:
     return {"success": True, **GetKeysResponse(keys=keys).to_json_dict()}
+
+
+def get_public_key_response_data(key: KeyData) -> Dict[str, object]:
+    return {"success": True, **GetPublicKeyResponse(key=key).to_json_dict()}
+
+
+def get_public_keys_response_data(keys: List[KeyData]) -> Dict[str, object]:
+    return {"success": True, **GetPublicKeysResponse(keys=keys).to_json_dict()}
 
 
 def label_missing_response_data(request_type: Type[Any]) -> Dict[str, Any]:
@@ -210,7 +336,7 @@ def assert_running_services_response(response_dict: Dict[str, Any], expected_res
 @pytest.fixture(scope="session")
 def mock_lonely_daemon():
     # Mock daemon server without any registered services/connections
-    return Daemon(services={}, connections={})
+    return Daemon(services={}, connections={}, net_config={})
 
 
 @pytest.fixture(scope="session")
@@ -224,6 +350,7 @@ def mock_daemon_with_services():
             "chia_plotter": [Service(True), Service(True)],
         },
         connections={},
+        net_config={},
     )
 
 
@@ -240,7 +367,48 @@ def mock_daemon_with_services_and_connections():
             "apple": [1],
             "banana": [1, 2],
         },
+        net_config={},
     )
+
+
+@pytest.fixture(scope="function")
+def get_keychain_for_function():
+    with TempKeyring() as keychain:
+        yield keychain
+        KeyringWrapper.cleanup_shared_instance()
+
+
+@pytest.fixture(scope="function")
+def mock_daemon_with_config_and_keys(get_keychain_for_function, root_path_populated_with_config):
+    root_path = root_path_populated_with_config
+    config = load_config(root_path, "config.yaml")
+    keychain = Keychain()
+
+    # populate the keychain with some test keys
+    keychain.add_private_key(test_key_data.mnemonic_str())
+    keychain.add_private_key(test_key_data_2.mnemonic_str())
+
+    # Mock daemon server with net_config set for mainnet
+    return Daemon(services={}, connections={}, net_config=config)
+
+
+@pytest.fixture(scope="function")
+async def daemon_client_with_config_and_keys(get_keychain_for_function, get_daemon, bt):
+    keychain = Keychain()
+
+    # populate the keychain with some test keys
+    keychain.add_private_key(test_key_data.mnemonic_str())
+    keychain.add_private_key(test_key_data_2.mnemonic_str())
+
+    daemon = get_daemon
+    client = await connect_to_daemon(
+        daemon.self_hostname,
+        daemon.daemon_port,
+        50 * 1000 * 1000,
+        bt.get_daemon_ssl_context(),
+        heartbeat=daemon.heartbeat,
+    )
+    return client
 
 
 @pytest.mark.asyncio
@@ -274,7 +442,7 @@ async def test_daemon_simulation(self_hostname, daemon_simulation):
     data = {"service": service_name}
     payload = create_payload("register_service", data, service_name, "daemon")
     await ws.send_str(payload)
-    message_queue = asyncio.Queue()
+    message_queue: asyncio.Queue = asyncio.Queue()
 
     async def reader(ws, queue):
         while True:
@@ -412,6 +580,213 @@ async def test_running_services_with_services_and_connections(mock_daemon_with_s
     assert_running_services_response(
         response, {"success": True, "running_services": ["my_refrigerator", "apple", "banana", service_plotter]}
     )
+
+
+@pytest.mark.asyncio
+async def test_get_routes(mock_lonely_daemon):
+    daemon = mock_lonely_daemon
+    response = await daemon.get_routes({})
+    assert response == {
+        "success": True,
+        "routes": ["get_routes", "example_one", "example_two", "example_three"],
+    }
+
+
+@datacases(
+    WalletAddressCase(
+        id="no params",
+        request={},
+        response={
+            "success": True,
+            "wallet_addresses": {
+                test_key_data.fingerprint: [
+                    {
+                        "address": "xch1zze67l3jgxuvyaxhjhu7326sezxxve7lgzvq0497ddggzhff7c9s2pdcwh",
+                        "hd_path": "m/12381/8444/2/0",
+                    },
+                ],
+                test_key_data_2.fingerprint: [
+                    {
+                        "address": "xch1fra5h0qnsezrxenjyslyxx7y4l268gq52m0rgenh58vn8f577uzswzvk4v",
+                        "hd_path": "m/12381/8444/2/0",
+                    }
+                ],
+            },
+        },
+    ),
+    WalletAddressCase(
+        id="list of fingerprints",
+        request={"fingerprints": [test_key_data.fingerprint]},
+        response={
+            "success": True,
+            "wallet_addresses": {
+                test_key_data.fingerprint: [
+                    {
+                        "address": "xch1zze67l3jgxuvyaxhjhu7326sezxxve7lgzvq0497ddggzhff7c9s2pdcwh",
+                        "hd_path": "m/12381/8444/2/0",
+                    },
+                ],
+            },
+        },
+    ),
+    WalletAddressCase(
+        id="count and index",
+        request={"fingerprints": [test_key_data.fingerprint], "count": 2, "index": 1},
+        response={
+            "success": True,
+            "wallet_addresses": {
+                test_key_data.fingerprint: [
+                    {
+                        "address": "xch16jqcaguq27z8xvpu89j7eaqfzn6k89hdrrlm0rffku85n8n7m7sqqmmahh",
+                        "hd_path": "m/12381/8444/2/1",
+                    },
+                    {
+                        "address": "xch1955vj0gx5tqe7v5tceajn2p4z4pup8d4g2exs0cz4xjqses8ru6qu8zp3y",
+                        "hd_path": "m/12381/8444/2/2",
+                    },
+                ]
+            },
+        },
+    ),
+    WalletAddressCase(
+        id="hardened derivations",
+        request={"fingerprints": [test_key_data.fingerprint], "non_observer_derivation": True},
+        response={
+            "success": True,
+            "wallet_addresses": {
+                test_key_data.fingerprint: [
+                    {
+                        "address": "xch1k996a7h3agygjhqtrf0ycpa7wfd6k5ye2plkf54ukcmdj44gkqkq880l7n",
+                        "hd_path": "m/12381n/8444n/2n/0n",
+                    }
+                ]
+            },
+        },
+    ),
+    WalletAddressCase(
+        id="invalid fingerprint",
+        request={"fingerprints": [999999]},
+        response={
+            "success": False,
+            "error": "key(s) not found for fingerprint(s) {999999}",
+        },
+    ),
+    WalletAddressCase(
+        id="missing private key",
+        request={"fingerprints": [test_key_data.fingerprint]},
+        response={
+            "success": False,
+            "error": f"missing private key for key with fingerprint {test_key_data.fingerprint}",
+        },
+        pubkeys_only=True,
+    ),
+)
+@pytest.mark.asyncio
+async def test_get_wallet_addresses(
+    mock_daemon_with_config_and_keys,
+    monkeypatch,
+    case: WalletAddressCase,
+):
+    daemon = mock_daemon_with_config_and_keys
+
+    original_get_keys = Keychain.get_keys
+
+    def get_keys_no_secrets(self, include_secrets):
+        return original_get_keys(self, include_secrets=False)
+
+    # in the pubkeys_only case, we're ensuring that only pubkeys are returned by get_keys,
+    # which will have the effect of causing get_wallet_addresses to raise an exception
+    if case.pubkeys_only:
+        # monkeypatch Keychain.get_keys() to always call get_keys() with include_secrets=False
+        monkeypatch.setattr(Keychain, "get_keys", get_keys_no_secrets)
+
+    assert case.response == await daemon.get_wallet_addresses(case.request)
+
+
+@datacases(
+    KeysForPlotCase(
+        id="no params",
+        # When not specifying exact fingerprints, `get_keys_for_plotting` returns
+        # all farmer_pk/pool_pk data for available fingerprints
+        request={},
+        response={
+            "success": True,
+            "keys": {
+                test_key_data.fingerprint: {
+                    "farmer_public_key": bytes(master_sk_to_farmer_sk(test_key_data.private_key).get_g1()).hex(),
+                    "pool_public_key": bytes(master_sk_to_pool_sk(test_key_data.private_key).get_g1()).hex(),
+                },
+                test_key_data_2.fingerprint: {
+                    "farmer_public_key": bytes(master_sk_to_farmer_sk(test_key_data_2.private_key).get_g1()).hex(),
+                    "pool_public_key": bytes(master_sk_to_pool_sk(test_key_data_2.private_key).get_g1()).hex(),
+                },
+            },
+        },
+    ),
+    KeysForPlotCase(
+        id="list of fingerprints",
+        request={"fingerprints": [test_key_data.fingerprint]},
+        response={
+            "success": True,
+            "keys": {
+                test_key_data.fingerprint: {
+                    "farmer_public_key": bytes(master_sk_to_farmer_sk(test_key_data.private_key).get_g1()).hex(),
+                    "pool_public_key": bytes(master_sk_to_pool_sk(test_key_data.private_key).get_g1()).hex(),
+                },
+            },
+        },
+    ),
+    KeysForPlotCase(
+        id="invalid fingerprint",
+        request={"fingerprints": [999999]},
+        response={
+            "success": False,
+            "error": "key(s) not found for fingerprint(s) {999999}",
+        },
+    ),
+)
+@pytest.mark.asyncio
+async def test_get_keys_for_plotting(
+    mock_daemon_with_config_and_keys,
+    monkeypatch,
+    case: KeysForPlotCase,
+):
+    daemon = mock_daemon_with_config_and_keys
+    assert case.response == await daemon.get_keys_for_plotting(case.request)
+
+
+@datacases(
+    KeysForPlotCase(
+        id="invalid request format",
+        request={"fingerprints": test_key_data.fingerprint},
+        response={},
+    ),
+)
+@pytest.mark.asyncio
+async def test_get_keys_for_plotting_error(
+    mock_daemon_with_config_and_keys,
+    monkeypatch,
+    case: KeysForPlotCase,
+):
+    daemon = mock_daemon_with_config_and_keys
+    with pytest.raises(ValueError, match="fingerprints must be a list of integer"):
+        await daemon.get_keys_for_plotting(case.request)
+
+
+@pytest.mark.asyncio
+async def test_get_keys_for_plotting_client(daemon_client_with_config_and_keys):
+    client = await daemon_client_with_config_and_keys
+    response = await client.get_keys_for_plotting()
+    assert response["data"]["success"] is True
+    assert len(response["data"]["keys"]) == 2
+    assert str(test_key_data.fingerprint) in response["data"]["keys"]
+    assert str(test_key_data_2.fingerprint) in response["data"]["keys"]
+    response = await client.get_keys_for_plotting([test_key_data.fingerprint])
+    assert response["data"]["success"] is True
+    assert len(response["data"]["keys"]) == 1
+    assert str(test_key_data.fingerprint) in response["data"]["keys"]
+    assert str(test_key_data_2.fingerprint) not in response["data"]["keys"]
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -726,6 +1101,57 @@ async def test_get_keys(daemon_connection_and_temp_keychain):
 
 
 @pytest.mark.asyncio
+async def test_get_public_key(daemon_connection_and_temp_keychain):
+    ws, keychain = daemon_connection_and_temp_keychain
+
+    # empty keychain
+    await ws.send_str(create_payload("get_public_key", {"fingerprint": test_key_data.fingerprint}, "test", "daemon"))
+    assert_response(await ws.receive(), fingerprint_not_found_response_data(test_key_data.fingerprint))
+
+    keychain.add_private_key(test_key_data.mnemonic_str())
+
+    await ws.send_str(create_payload("get_public_key", {"fingerprint": test_key_data.fingerprint}, "test", "daemon"))
+    response = await ws.receive()
+    assert_response(response, get_public_key_response_data(test_key_data))
+
+    # Only allowed_keys are allowed in the key dict
+    key_dict = json.loads(response.data)["data"]["key"]
+    keys_in_response = [key for key in key_dict.keys()]
+    allowed_keys = ["fingerprint", "public_key", "label"]
+    for key in keys_in_response:
+        assert key in allowed_keys, f"Unexpected key '{key}' found in response."
+
+
+@pytest.mark.asyncio
+async def test_get_public_keys(daemon_connection_and_temp_keychain):
+    ws, keychain = daemon_connection_and_temp_keychain
+
+    # empty keychain
+    await ws.send_str(create_payload("get_public_keys", {}, "test", "daemon"))
+    assert_response(await ws.receive(), get_public_keys_response_data([]))
+
+    # populate keychain
+    keys = [KeyData.generate() for _ in range(5)]
+    keys_added = []
+    for key_data in keys:
+        keychain.add_private_key(key_data.mnemonic_str())
+        keys_added.append(key_data)
+
+    get_public_keys_response = get_public_keys_response_data(keys_added)
+    await ws.send_str(create_payload("get_public_keys", {}, "test", "daemon"))
+    response = await ws.receive()
+    assert_response(response, get_public_keys_response)
+
+    # Only allowed_keys are allowed in the key dict
+    allowed_keys = ["fingerprint", "public_key", "label"]
+    keys_array = json.loads(response.data)["data"]["keys"]
+    for key_dict in keys_array:
+        keys_in_response = [key for key in key_dict.keys()]
+        for key in keys_in_response:
+            assert key in allowed_keys, f"Unexpected key '{key}' found in response."
+
+
+@pytest.mark.asyncio
 async def test_key_renaming(daemon_connection_and_temp_keychain):
     ws, keychain = daemon_connection_and_temp_keychain
     keychain.add_private_key(test_key_data.mnemonic_str())
@@ -918,7 +1344,13 @@ async def test_bad_json(daemon_connection_and_temp_keychain: Tuple[aiohttp.Clien
         response={
             "success": True,
             "plotters": {
-                "chiapos": {"display_name": "Chia Proof of Space", "installed": True, "version": "1.0.11"},
+                "bladebit": {
+                    "can_install": True,
+                    "cuda_support": False,
+                    "display_name": "BladeBit Plotter",
+                    "installed": False,
+                },
+                "chiapos": {"display_name": "Chia Proof of Space", "installed": True, "version": chiapos_version},
                 "madmax": {"can_install": True, "display_name": "madMAx Plotter", "installed": False},
             },
         },
@@ -1262,6 +1694,42 @@ async def test_plotter_errors(
     ),
     RouteCase(
         route="start_plotting",
+        description="bladebit - cudaplot - hybrid 128 mode",
+        request={
+            **plotter_request_ref,
+            "plotter": "bladebit",
+            "plot_type": "cudaplot",
+            "w": True,
+            "m": True,
+            "no_cpu_affinity": True,
+            "e": False,
+            "compress": 1,
+            "disk_128": True,
+        },
+        response={
+            "success": True,
+        },
+    ),
+    RouteCase(
+        route="start_plotting",
+        description="bladebit - cudaplot - hybrid 16 mode",
+        request={
+            **plotter_request_ref,
+            "plotter": "bladebit",
+            "plot_type": "cudaplot",
+            "w": True,
+            "m": True,
+            "no_cpu_affinity": True,
+            "e": False,
+            "compress": 1,
+            "disk_16": True,
+        },
+        response={
+            "success": True,
+        },
+    ),
+    RouteCase(
+        route="start_plotting",
         description="madmax",
         request={
             **plotter_request_ref,
@@ -1485,3 +1953,37 @@ async def test_plotter_stop_plotting(
     # 5) Finally, get the "ack" for the stop_plotting payload
     response = await ws.receive()
     assert_response(response, {"success": True}, stop_plotting_request_id)
+
+
+@datacases(
+    ChiaPlottersBladebitArgsCase(case_id="1", plot_type="cudaplot"),
+    ChiaPlottersBladebitArgsCase(case_id="2", plot_type="cudaplot", hybrid_disk_mode=16),
+    ChiaPlottersBladebitArgsCase(case_id="3", plot_type="cudaplot", hybrid_disk_mode=128),
+)
+def test_run_plotter_bladebit(
+    mocker: MockerFixture,
+    mock_daemon_with_config_and_keys,
+    bt: BlockTools,
+    case: ChiaPlottersBladebitArgsCase,
+) -> None:
+    root_path = bt.root_path
+
+    case.farmer_pk = bytes(bt.farmer_pk).hex()
+    case.final_dir = str(bt.plot_dir)
+
+    def bladebit_exists(x: Path) -> bool:
+        return True if isinstance(x, Path) and x.parent == root_path / "plotters" else mocker.DEFAULT
+
+    def get_bladebit_version(_: Path) -> Tuple[bool, List[str]]:
+        return True, ["3", "0", "0"]
+
+    mocker.patch("os.path.exists", side_effect=bladebit_exists)
+    mocker.patch("chia.plotters.bladebit.get_bladebit_version", side_effect=get_bladebit_version)
+    mock_run_plotter = mocker.patch("chia.plotters.bladebit.run_plotter")
+
+    call_plotters(root_path, case.to_command_array())
+
+    assert mock_run_plotter.call_args.args[0] == root_path
+    assert mock_run_plotter.call_args.args[1] == "bladebit"
+    assert mock_run_plotter.call_args.args[2][1:] == case.expected_raw_command_args()
+    mock_run_plotter.assert_called_once()
