@@ -83,10 +83,10 @@ if [ "$PLATFORM" = "arm64" ]; then
   LAST_EXIT_CODE=$?
 else
   sudo apt -y install flatpak flatpak-builder
-  echo env DEBUG="@malept/flatpak-bundler" electron-builder build --linux flatpak --x64 \
+  echo DEBUG="@malept/flatpak-bundler" electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain"
-  env DEBUG="@malept/flatpak-bundler" electron-builder build --linux flatpak --x64 \
+  DEBUG="@malept/flatpak-bundler" electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain"
   LAST_EXIT_CODE=$?
