@@ -74,19 +74,19 @@ if [ "$PLATFORM" = "arm64" ]; then
   sudo gem install public_suffix -v 4.0.7
   sudo gem install fpm
   sudo apt -y install flatpak flatpak-builder
-  echo USE_SYSTEM_FPM=true env DEBUG="@malept/flatpak-bundler" electron-builder build --linux flatpak --arm64 \
+  echo USE_SYSTEM_FPM=true env DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --arm64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain"
-  USE_SYSTEM_FPM=true electron-builder build --linux flatpak --arm64 \
+  USE_SYSTEM_FPM=true npx electron-builder build --linux flatpak --arm64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain"
   LAST_EXIT_CODE=$?
 else
   sudo apt -y install flatpak flatpak-builder
-  echo DEBUG="@malept/flatpak-bundler" electron-builder build --linux flatpak --x64 \
+  echo DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain"
-  DEBUG="@malept/flatpak-bundler" electron-builder build --linux flatpak --x64 \
+  DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain"
   LAST_EXIT_CODE=$?
