@@ -74,9 +74,9 @@ if [ "$PLATFORM" = "arm64" ]; then
   sudo gem install public_suffix -v 4.0.7
   sudo gem install fpm
   sudo apt -y install flatpak flatpak-builder
-  flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-  flatpak install -y --noninteractive flathub org.freedesktop.Sdk//22.08
-  flatpak install -y --noninteractive flathub org.freedesktop.Platform//22.08
+  sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+  sudo flatpak install -y --noninteractive flathub org.freedesktop.Sdk//22.08
+  sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//22.08
   echo USE_SYSTEM_FPM=true env DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --arm64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain"
@@ -86,9 +86,9 @@ if [ "$PLATFORM" = "arm64" ]; then
   LAST_EXIT_CODE=$?
 else
   sudo apt -y install flatpak flatpak-builder
-  flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-  flatpak install -y --noninteractive flathub org.freedesktop.Sdk//22.08
-  flatpak install -y --noninteractive flathub org.freedesktop.Platform//22.08
+  sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+  sudo flatpak install -y --noninteractive flathub org.freedesktop.Sdk//22.08
+  sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//22.08
   echo DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain"
