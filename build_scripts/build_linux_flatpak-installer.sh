@@ -74,6 +74,8 @@ if [ "$PLATFORM" = "arm64" ]; then
   sudo gem install public_suffix -v 4.0.7
   sudo gem install fpm
   sudo apt -y install flatpak flatpak-builder
+  sudo flatpak remote-add --if-not-exists --system flathub \
+  https://flathub.org/repo/flathub.flatpakrepo
   echo USE_SYSTEM_FPM=true env DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --arm64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain"
@@ -83,6 +85,8 @@ if [ "$PLATFORM" = "arm64" ]; then
   LAST_EXIT_CODE=$?
 else
   sudo apt -y install flatpak flatpak-builder
+  sudo flatpak remote-add --if-not-exists --system flathub \
+  https://flathub.org/repo/flathub.flatpakrepo
   echo DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain"
