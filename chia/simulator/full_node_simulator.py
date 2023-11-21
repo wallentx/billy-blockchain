@@ -479,6 +479,34 @@ class FullNodeSimulator(FullNodeAPI):
 
                 await asyncio.sleep(backoff)
 
+    async def wait_transaction_records_marked_as_in_mempool(
+        self,
+        record_ids: Collection[bytes32],
+        wallet_node: WalletNode,
+        timeout: Union[None, float] = 10,
+    ) -> None:
+        """Wait until the transaction records have been marked that they have made it into the mempool.  Transaction
+        records with no spend bundle are ignored.
+
+        Arguments:
+            records: The transaction records to wait for.
+        """
+        with anyio.fail_after(delay=adjusted_timeout(timeout)):
+            ids_to_check: Set[bytes32] = set(record_ids)
+
+            for backoff in backoff_times():
+                found = set()
+                for txid in ids_to_check:
+                    tx = await wallet_node.wallet_state_manager.tx_store.get_transaction_record(txid)
+                    if tx is not None and (tx.is_in_mempool() or tx.spend_bundle is None):
+                        found.add(txid)
+                ids_to_check = ids_to_check.difference(found)
+
+                if len(ids_to_check) == 0:
+                    return
+
+                await asyncio.sleep(backoff)
+
     async def process_transaction_records(
         self,
         records: Collection[TransactionRecord],
@@ -569,6 +597,24 @@ class FullNodeSimulator(FullNodeAPI):
 
                 # at least one wallet has unconfirmed transactions
                 await asyncio.sleep(backoff)
+
+    async def check_transactions_confirmed(
+        self,
+        wallet_state_manager: WalletStateManager,
+        transactions: List[TransactionRecord],
+        timeout: Optional[float] = 5,
+    ) -> None:
+        transactions_left: Set[bytes32] = {tx.name for tx in transactions}
+        with anyio.fail_after(delay=adjusted_timeout(timeout)):
+            for backoff in backoff_times():
+                transactions_left = transactions_left & {
+                    tx.name for tx in await wallet_state_manager.tx_store.get_all_unconfirmed()
+                }
+                if len(transactions_left) == 0:
+                    break
+
+                # at least one wallet has unconfirmed transactions
+                await asyncio.sleep(backoff)  # pragma: no cover
 
     async def create_coins_with_amounts(
         self,

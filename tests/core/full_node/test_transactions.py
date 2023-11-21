@@ -13,12 +13,12 @@ from chia.simulator.simulator_protocol import FarmNewBlockProtocol
 from chia.simulator.time_out_assert import time_out_assert
 from chia.types.blockchain_format.sized_bytes import bytes32
 from chia.types.peer_info import PeerInfo
-from chia.util.ints import uint16, uint32
+from chia.util.ints import uint32
 from chia.wallet.util.tx_config import DEFAULT_TX_CONFIG
 
 
 class TestTransactions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_wallet_coinbase(self, simulator_and_wallet, self_hostname):
         num_blocks = 5
         full_nodes, wallets, _ = simulator_and_wallet
@@ -28,7 +28,7 @@ class TestTransactions:
         wallet = wallet_node.wallet_state_manager.main_wallet
         ph = await wallet.get_new_puzzlehash()
 
-        await server_2.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await server_2.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
         for i in range(num_blocks):
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
 
@@ -40,7 +40,7 @@ class TestTransactions:
         print(await wallet.get_confirmed_balance(), funds)
         await time_out_assert(20, wallet.get_confirmed_balance, funds)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_tx_propagation(self, three_nodes_two_wallets, self_hostname, seeded_random: random.Random):
         num_blocks = 5
         full_nodes, wallets, _ = three_nodes_two_wallets
@@ -60,10 +60,10 @@ class TestTransactions:
         #
         # wallet0 <-> sever0 <-> server1 <-> server2 <-> wallet1
         #
-        await wallet_server_0.start_client(PeerInfo(self_hostname, uint16(server_0._port)), None)
-        await server_0.start_client(PeerInfo(self_hostname, uint16(server_1._port)), None)
-        await server_1.start_client(PeerInfo(self_hostname, uint16(server_2._port)), None)
-        await wallet_server_1.start_client(PeerInfo(self_hostname, uint16(server_2._port)), None)
+        await wallet_server_0.start_client(PeerInfo(self_hostname, server_0.get_port()), None)
+        await server_0.start_client(PeerInfo(self_hostname, server_1.get_port()), None)
+        await server_1.start_client(PeerInfo(self_hostname, server_2.get_port()), None)
+        await wallet_server_1.start_client(PeerInfo(self_hostname, server_2.get_port()), None)
 
         for i in range(num_blocks):
             await full_node_api_0.farm_new_transaction_block(FarmNewBlockProtocol(ph))
@@ -124,7 +124,7 @@ class TestTransactions:
         )
         await time_out_assert(20, wallet_1.wallet_state_manager.main_wallet.get_confirmed_balance, 10)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_mempool_tx_sync(self, three_nodes_two_wallets, self_hostname, seeded_random: random.Random):
         num_blocks = 5
         full_nodes, wallets, _ = three_nodes_two_wallets
@@ -141,8 +141,8 @@ class TestTransactions:
 
         # wallet0 <-> sever0 <-> server1
 
-        await wallet_server_0.start_client(PeerInfo(self_hostname, uint16(server_0._port)), None)
-        await server_0.start_client(PeerInfo(self_hostname, uint16(server_1._port)), None)
+        await wallet_server_0.start_client(PeerInfo(self_hostname, server_0.get_port()), None)
+        await server_0.start_client(PeerInfo(self_hostname, server_1.get_port()), None)
 
         for i in range(num_blocks):
             await full_node_api_0.farm_new_transaction_block(FarmNewBlockProtocol(ph))
@@ -184,7 +184,7 @@ class TestTransactions:
         # make a final connection.
         # wallet0 <-> sever0 <-> server1 <-> server2
 
-        await server_1.start_client(PeerInfo(self_hostname, uint16(server_2._port)), None)
+        await server_1.start_client(PeerInfo(self_hostname, server_2.get_port()), None)
 
         await time_out_assert(
             10,

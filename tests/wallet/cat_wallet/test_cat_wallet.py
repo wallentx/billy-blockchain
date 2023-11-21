@@ -44,7 +44,7 @@ class TestCATWallet:
         "trusted",
         [True, False],
     )
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cat_creation(self, self_hostname, two_wallet_nodes, trusted):
         num_blocks = 3
         full_nodes, wallets, _ = two_wallet_nodes
@@ -59,7 +59,7 @@ class TestCATWallet:
         else:
             wallet_node.config["trusted_peers"] = {}
 
-        await server_2.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await server_2.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
         for i in range(0, num_blocks):
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
         await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(32 * b"0"))
@@ -118,7 +118,7 @@ class TestCATWallet:
         )
         await time_out_assert(20, cat_wallet.get_confirmed_balance, 0)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cat_creation_unique_lineage_store(self, self_hostname, two_wallet_nodes):
         num_blocks = 3
         full_nodes, wallets, _ = two_wallet_nodes
@@ -129,7 +129,7 @@ class TestCATWallet:
         ph = await wallet.get_new_puzzlehash()
         wallet_node.config["trusted_peers"] = {full_node_server.node_id.hex(): full_node_server.node_id.hex()}
 
-        await wallet_server.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await wallet_server.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
         for i in range(0, num_blocks):
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
         await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(32 * b"0"))
@@ -170,7 +170,7 @@ class TestCATWallet:
         "trusted",
         [True, False],
     )
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cat_spend(self, self_hostname, two_wallet_nodes, trusted):
         num_blocks = 3
         full_nodes, wallets, _ = two_wallet_nodes
@@ -189,8 +189,8 @@ class TestCATWallet:
         else:
             wallet_node.config["trusted_peers"] = {}
             wallet_node_2.config["trusted_peers"] = {}
-        await server_2.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-        await server_3.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await server_2.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+        await server_3.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
         for i in range(0, num_blocks):
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
@@ -284,7 +284,7 @@ class TestCATWallet:
         "trusted",
         [True, False],
     )
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cat_reuse_address(self, self_hostname, two_wallet_nodes, trusted):
         num_blocks = 3
         full_nodes, wallets, _ = two_wallet_nodes
@@ -302,8 +302,8 @@ class TestCATWallet:
         else:
             wallet_node.config["trusted_peers"] = {}
             wallet_node_2.config["trusted_peers"] = {}
-        await server_2.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-        await server_3.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await server_2.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+        await server_3.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
         for i in range(0, num_blocks):
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
@@ -392,7 +392,7 @@ class TestCATWallet:
         "trusted",
         [True, False],
     )
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_wallet_for_asset_id(self, self_hostname, two_wallet_nodes, trusted):
         num_blocks = 3
         full_nodes, wallets, _ = two_wallet_nodes
@@ -406,7 +406,7 @@ class TestCATWallet:
             wallet_node.config["trusted_peers"] = {full_node_server.node_id.hex(): full_node_server.node_id.hex()}
         else:
             wallet_node.config["trusted_peers"] = {}
-        await server_2.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await server_2.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
         for i in range(0, num_blocks):
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
@@ -449,7 +449,7 @@ class TestCATWallet:
         "trusted",
         [True, False],
     )
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cat_doesnt_see_eve(self, self_hostname, two_wallet_nodes, trusted):
         num_blocks = 3
         full_nodes, wallets, _ = two_wallet_nodes
@@ -467,8 +467,8 @@ class TestCATWallet:
         else:
             wallet_node.config["trusted_peers"] = {}
             wallet_node_2.config["trusted_peers"] = {}
-        await server_2.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-        await server_3.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await server_2.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+        await server_3.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
         for i in range(0, num_blocks):
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
@@ -546,7 +546,7 @@ class TestCATWallet:
         "trusted",
         [True, False],
     )
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cat_spend_multiple(self, self_hostname, three_wallet_nodes, trusted):
         num_blocks = 3
         full_nodes, wallets, _ = three_wallet_nodes
@@ -568,9 +568,9 @@ class TestCATWallet:
             wallet_node_0.config["trusted_peers"] = {}
             wallet_node_1.config["trusted_peers"] = {}
             wallet_node_2.config["trusted_peers"] = {}
-        await wallet_server_0.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-        await wallet_server_1.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-        await wallet_server_2.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await wallet_server_0.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+        await wallet_server_1.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+        await wallet_server_2.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
         for i in range(0, num_blocks):
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
@@ -673,7 +673,7 @@ class TestCATWallet:
 
     @pytest.mark.limit_consensus_modes(allowed=[ConsensusMode.PLAIN, ConsensusMode.HARD_FORK_2_0], reason="save time")
     @pytest.mark.parametrize("trusted", [True, False])
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cat_max_amount_send(self, self_hostname, two_wallet_nodes, trusted):
         num_blocks = 3
         full_nodes, wallets, _ = two_wallet_nodes
@@ -690,8 +690,8 @@ class TestCATWallet:
         else:
             wallet_node.config["trusted_peers"] = {}
             wallet_node_2.config["trusted_peers"] = {}
-        await server_2.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-        await server_3.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await server_2.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+        await server_3.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
         for i in range(0, num_blocks):
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
@@ -786,7 +786,7 @@ class TestCATWallet:
     @pytest.mark.limit_consensus_modes(allowed=[ConsensusMode.PLAIN, ConsensusMode.HARD_FORK_2_0], reason="save time")
     @pytest.mark.parametrize("trusted", [True, False])
     @pytest.mark.parametrize("autodiscovery", [True, False])
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cat_hint(self, self_hostname, two_wallet_nodes, trusted, autodiscovery):
         num_blocks = 3
         full_nodes, wallets, _ = two_wallet_nodes
@@ -806,8 +806,8 @@ class TestCATWallet:
             wallet_node_2.config["trusted_peers"] = {}
         wallet_node.config["automatically_add_unknown_cats"] = autodiscovery
         wallet_node_2.config["automatically_add_unknown_cats"] = autodiscovery
-        await server_2.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-        await server_3.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await server_2.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+        await server_3.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
         for i in range(0, num_blocks):
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
@@ -904,7 +904,7 @@ class TestCATWallet:
         "trusted",
         [True, False],
     )
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cat_change_detection(
         self, self_hostname: str, one_wallet_and_one_simulator_services: SimulatorsAndWalletsServices, trusted: bool
     ) -> None:
@@ -933,7 +933,7 @@ class TestCATWallet:
         else:
             wallet_node_0.config["trusted_peers"] = {}
 
-        await wallet_node_0.server.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+        await wallet_node_0.server.start_client(PeerInfo(self_hostname, uint16(full_node_server.get_port())), None)
         await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
         await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_0, timeout=20)
 
@@ -1062,7 +1062,7 @@ class TestCATWallet:
         assert not full_node_api.full_node.subscriptions.has_ph_subscription(puzzlehash_unhardened)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unacknowledged_cat_table() -> None:
     db_name = Path(tempfile.TemporaryDirectory().name).joinpath("test.sqlite")
     db_name.parent.mkdir(parents=True, exist_ok=True)

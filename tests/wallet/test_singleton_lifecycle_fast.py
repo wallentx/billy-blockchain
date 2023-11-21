@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from blspy import G1Element, G2Element
+from chia_rs import G1Element, G2Element
 from clvm_tools import binutils
 
 from chia.consensus.default_constants import DEFAULT_CONSTANTS
@@ -358,7 +358,7 @@ def claim_p2_singleton(
         SerializedProgram.from_program(p2_singleton_puzzle),
         p2_singleton_solution,
     )
-    expected_p2_singleton_announcement = Announcement(p2_singleton_coin_name, bytes(b"$")).name()
+    expected_p2_singleton_announcement = Announcement(p2_singleton_coin_name, b"$").name()
     singleton_conditions = [
         Program.to([ConditionOpcode.CREATE_PUZZLE_ANNOUNCEMENT, p2_singleton_coin_name]),
         Program.to([ConditionOpcode.CREATE_COIN, inner_puzzle_hash, 1]),

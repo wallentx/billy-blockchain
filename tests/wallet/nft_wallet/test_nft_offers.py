@@ -12,7 +12,7 @@ from chia.simulator.time_out_assert import time_out_assert, time_out_assert_not_
 from chia.types.blockchain_format.program import Program
 from chia.types.blockchain_format.sized_bytes import bytes32
 from chia.types.peer_info import PeerInfo
-from chia.util.ints import uint16, uint32, uint64
+from chia.util.ints import uint32, uint64
 from chia.wallet.cat_wallet.cat_wallet import CATWallet
 from chia.wallet.nft_wallet.nft_wallet import NFTWallet
 from chia.wallet.outer_puzzles import create_asset_id, match_puzzle
@@ -39,7 +39,7 @@ async def get_trade_and_status(trade_manager, trade) -> TradeStatus:  # type: ig
     "reuse_puzhash",
     [True, False],
 )
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_nft_offer_with_fee(
     self_hostname: str, two_wallet_nodes: Any, trusted: Any, reuse_puzhash: bool, seeded_random: random.Random
 ) -> None:
@@ -68,8 +68,8 @@ async def test_nft_offer_with_fee(
         wallet_node_0.config["trusted_peers"] = {}
         wallet_node_1.config["trusted_peers"] = {}
 
-    await server_0.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-    await server_1.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+    await server_0.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+    await server_1.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
     await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(maker_ph))
     await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(taker_ph))
@@ -234,7 +234,7 @@ async def test_nft_offer_with_fee(
     "trusted",
     [False],
 )
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_nft_offer_cancellations(
     self_hostname: str, two_wallet_nodes: Any, trusted: Any, seeded_random: random.Random
 ) -> None:
@@ -261,8 +261,8 @@ async def test_nft_offer_cancellations(
         wallet_node_0.config["trusted_peers"] = {}
         wallet_node_1.config["trusted_peers"] = {}
 
-    await server_0.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-    await server_1.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+    await server_0.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+    await server_1.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
     await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(maker_ph))
     await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(taker_ph))
@@ -347,7 +347,7 @@ async def test_nft_offer_cancellations(
     "trusted",
     [False],
 )
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_nft_offer_with_metadata_update(
     self_hostname: str, two_wallet_nodes: Any, trusted: Any, seeded_random: random.Random
 ) -> None:
@@ -374,8 +374,8 @@ async def test_nft_offer_with_metadata_update(
         wallet_node_0.config["trusted_peers"] = {}
         wallet_node_1.config["trusted_peers"] = {}
 
-    await server_0.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-    await server_1.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+    await server_0.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+    await server_1.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
     await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(maker_ph))
     await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(taker_ph))
@@ -486,7 +486,7 @@ async def test_nft_offer_with_metadata_update(
 @pytest.mark.limit_consensus_modes(allowed=[ConsensusMode.PLAIN, ConsensusMode.HARD_FORK_2_0], reason="save time")
 @pytest.mark.parametrize("trusted", [False])
 @pytest.mark.parametrize("reuse_puzhash", [True, False])
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_nft_offer_nft_for_cat(
     self_hostname: str,
     two_wallet_nodes: Any,
@@ -517,8 +517,8 @@ async def test_nft_offer_nft_for_cat(
         wallet_node_0.config["trusted_peers"] = {}
         wallet_node_1.config["trusted_peers"] = {}
 
-    await server_0.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-    await server_1.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+    await server_0.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+    await server_1.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
     await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(maker_ph))
     await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(taker_ph))
@@ -748,7 +748,7 @@ async def test_nft_offer_nft_for_cat(
     "trusted",
     [False],
 )
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_nft_offer_nft_for_nft(
     self_hostname: str, two_wallet_nodes: Any, trusted: Any, seeded_random: random.Random
 ) -> None:
@@ -775,8 +775,8 @@ async def test_nft_offer_nft_for_nft(
         wallet_node_0.config["trusted_peers"] = {}
         wallet_node_1.config["trusted_peers"] = {}
 
-    await server_0.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
-    await server_1.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
+    await server_0.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
+    await server_1.start_client(PeerInfo(self_hostname, full_node_server.get_port()), None)
 
     await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(maker_ph))
     await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(taker_ph))

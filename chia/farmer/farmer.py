@@ -7,10 +7,10 @@ import time
 import traceback
 from math import floor
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Set, Tuple, Union, cast
 
 import aiohttp
-from blspy import AugSchemeMPL, G1Element, G2Element, PrivateKey
+from chia_rs import AugSchemeMPL, G1Element, G2Element, PrivateKey
 
 from chia.consensus.constants import ConsensusConstants
 from chia.daemon.keychain_proxy import KeychainProxy, connect_to_keychain_and_validate, wrap_local_keychain
@@ -106,6 +106,11 @@ HARVESTER PROTOCOL (FARMER <-> HARVESTER)
 
 
 class Farmer:
+    if TYPE_CHECKING:
+        from chia.rpc.rpc_server import RpcServiceProtocol
+
+        _protocol_check: ClassVar[RpcServiceProtocol] = cast("Farmer", None)
+
     def __init__(
         self,
         root_path: Path,
@@ -524,6 +529,8 @@ class Farmer:
                         "valid_partials_24h": [],
                         "invalid_partials_since_start": 0,
                         "invalid_partials_24h": [],
+                        "insufficient_partials_since_start": 0,
+                        "insufficient_partials_24h": [],
                         "stale_partials_since_start": 0,
                         "stale_partials_24h": [],
                         "missing_partials_since_start": 0,

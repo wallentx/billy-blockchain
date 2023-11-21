@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
-from blspy import G1Element
+from chia_rs import G1Element
 
 from chia.cmds.cmds_util import get_any_service_client
 from chia.farmer.farmer import Farmer
@@ -44,7 +44,7 @@ async def update_harvester_config(harvester_rpc_port: Optional[int], root_path: 
         return await harvester_client.update_harvester_config(config)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_with_empty_keychain(
     farmer_one_harvester_not_started: Tuple[
         List[Service[Harvester, HarvesterAPI]], Service[Farmer, FarmerAPI], BlockTools
@@ -71,7 +71,7 @@ async def test_start_with_empty_keychain(
     assert not farmer.started
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_harvester_handshake(
     farmer_one_harvester_not_started: Tuple[
         List[Service[Harvester, HarvesterAPI]], Service[Farmer, FarmerAPI], BlockTools
@@ -137,7 +137,7 @@ async def test_harvester_handshake(
     await time_out_assert(5, handshake_done, True)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_farmer_respond_signatures(
     caplog: pytest.LogCaptureFixture, harvester_farmer_environment: HarvesterFarmerEnvironment
 ) -> None:
@@ -170,7 +170,7 @@ async def test_farmer_respond_signatures(
     assert expected_error in caplog.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_harvester_config(
     farmer_one_harvester: Tuple[List[Service[Harvester, HarvesterAPI]], Service[Farmer, FarmerAPI], BlockTools]
 ) -> None:
@@ -214,7 +214,7 @@ async def test_harvester_config(
     check_config_match(new_config, harvester_config)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_missing_signage_point(
     farmer_one_harvester: Tuple[List[Service[Harvester, HarvesterAPI]], Service[Farmer, FarmerAPI], BlockTools]
 ) -> None:
@@ -284,3 +284,13 @@ async def test_missing_signage_point(
     _, sp_for_farmer_api = create_sp(index=2, challenge_hash=std_hash(b"4"))
     await farmer_api.new_signage_point(sp_for_farmer_api)
     assert number_of_missing_sps == uint32(1)
+
+
+@pytest.mark.anyio
+async def test_harvester_has_no_server(
+    farmer_one_harvester: Tuple[List[Service[Farmer, FarmerAPI]], Service[Harvester, HarvesterAPI], BlockTools],
+) -> None:
+    harvesters, _, bt = farmer_one_harvester
+    harvester_server = harvesters[0]._server
+
+    assert harvester_server.webserver is None
