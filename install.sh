@@ -45,11 +45,14 @@ done
 
 UBUNTU=false
 DEBIAN=false
+TERMUX=false
 if [ "$(uname)" = "Linux" ]; then
   #LINUX=1
   if command -v apt-get >/dev/null; then
     OS_ID=$(lsb_release -is)
-    if [ "$OS_ID" = "Debian" ]; then
+    if [ -v TERMUX_VERSION ]; then
+      TERMUX=true
+    elif [ "$OS_ID" = "Debian" ]; then
       DEBIAN=true
     else
       UBUNTU=true
