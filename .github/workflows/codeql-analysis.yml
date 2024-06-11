@@ -68,9 +68,7 @@ jobs:
       #    uses a compiled language
 
       - run: |
-          python -m venv venv && \
-          source venv/bin/activate && \
-          bash install.sh
+          pip install .
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
