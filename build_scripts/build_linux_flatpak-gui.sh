@@ -24,11 +24,10 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 fi
 
 # Verify that the main.js file exists
-if [ ! -f build/electron/main.js ]; then
+if [ ! -f ./packages/gui/build/electron/main.js ]; then
   echo >&2 "Error: Application entry file build/electron/main.js does not exist."
   exit 1
 fi
-cat build/electron/main.js
 
 # Remove unused packages
 rm -rf node_modules
@@ -46,9 +45,9 @@ rm -rf packages/wallets
 # Remove unused fat npm modules from the gui package
 cd ./packages/gui/node_modules || exit 1
 echo "Remove unused node_modules in the gui package to make cache slim more"
-rm -rf electron/dist # ~186MB
-rm -rf "@mui"        # ~71MB
-rm -rf typescript    # ~63MB
+# rm -rf electron/dist # ~186MB
+# rm -rf "@mui"        # ~71MB
+# rm -rf typescript    # ~63MB
 
 # Remove `packages/gui/node_modules/@chia-network` because it causes an error on later `electron-packager` command
 # rm -rf "@chia-network"
