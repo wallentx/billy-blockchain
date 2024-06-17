@@ -46,7 +46,7 @@ fi
 # Creates a directory of licenses
 echo "Building pip and NPM license directory"
 pwd
-bash ./build_license_directory.sh
+bash ./build_license_directory.sh > /dev/null
 
 cp -r dist/daemon ../chia-blockchain-gui/packages/gui
 
@@ -73,7 +73,7 @@ if [ "$PLATFORM" = "arm64" ]; then
   sudo gem install fpm
   sudo apt -y install flatpak flatpak-builder
   sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-  sudo flatpak install -y --noninteractice flathub org.electronjs.Electron2.BaseApp//23.08
+  sudo flatpak install -y --noninteractive flathub org.electronjs.Electron2.BaseApp//23.08
   sudo flatpak install -y --noninteractive flathub org.freedesktop.Sdk//23.08
   sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//23.08
   echo USE_SYSTEM_FPM=true env DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --arm64 \
@@ -86,7 +86,7 @@ if [ "$PLATFORM" = "arm64" ]; then
 else
   sudo apt -y install flatpak flatpak-builder
   sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-  sudo flatpak install -y --noninteractice flathub org.electronjs.Electron2.BaseApp//23.08
+  sudo flatpak install -y --noninteractive flathub org.electronjs.Electron2.BaseApp//23.08
   sudo flatpak install -y --noninteractive flathub org.freedesktop.Sdk//23.08
   sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//23.08
   echo DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --x64 \
