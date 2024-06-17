@@ -97,13 +97,13 @@ else
 fi
 ls -l dist/linux*-unpacked/resources
 
+if [ "$LAST_EXIT_CODE" -ne 0 ]; then
+  echo >&2 "electron-builder failed!"
+  exit $LAST_EXIT_CODE
+fi
+
 # reset the package.json to the original
 mv package.json.orig package.json
-
-if [ "$LAST_EXIT_CODE" -ne 0 ]; then
-	echo >&2 "electron-builder failed!"
-	exit $LAST_EXIT_CODE
-fi
 
 GUI_FLATPAK_NAME=chia-blockchain_${CHIA_INSTALLER_VERSION}_${PLATFORM}.flatpak
 mv "dist/chia-blockchain-${CHIA_INSTALLER_VERSION}.flatpak" "../../../build_scripts/dist/${GUI_FLATPAK_NAME}"
