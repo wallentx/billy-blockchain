@@ -59,6 +59,7 @@ cp -r dist/daemon ../chia-blockchain-gui/packages/gui
 cd ../chia-blockchain-gui/packages/gui || exit 1
 
 ls -la
+npm install electron-builder@latest inflight@latest glob@latest
 
 # sets the version for chia-blockchain in package.json
 cp package.json package.json.orig
