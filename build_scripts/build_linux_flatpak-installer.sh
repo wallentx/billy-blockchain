@@ -25,14 +25,17 @@ fi
 echo "Chia Installer Version is: $CHIA_INSTALLER_VERSION"
 export CHIA_INSTALLER_VERSION
 
+ls -la
 echo "Installing npm and electron packagers"
 cd npm_linux || exit 1
+ls -la
 npm ci
 cd .. || exit 1
+ls -la
 
 echo "Create dist/"
-rm -rf dist
-mkdir dist
+#rm -rf dist
+mkdir -p dist
 
 echo "Create executables with pyinstaller"
 SPEC_FILE=$(python -c 'import sys; from pathlib import Path; path = Path(sys.argv[1]); print(path.absolute().as_posix())' "pyinstaller.spec")
@@ -48,7 +51,9 @@ echo "Building pip and NPM license directory"
 pwd
 bash ./build_license_directory.sh > /dev/null
 
+ls -la dist/
 cp -r dist/daemon ../chia-blockchain-gui/packages/gui
+cp -r dist ../chia-blockchain-gui-packages/gui
 
 # Change to the gui package
 cd ../chia-blockchain-gui/packages/gui || exit 1
