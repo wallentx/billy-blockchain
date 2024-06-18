@@ -83,11 +83,11 @@ if [ "$PLATFORM" = "arm64" ]; then
   sudo flatpak install -y --noninteractive flathub org.electronjs.Electron2.BaseApp//23.08
   sudo flatpak install -y --noninteractive flathub org.freedesktop.Sdk//23.08
   sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//23.08
-  echo USE_SYSTEM_FPM=true env DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --arm64 \
+  echo USE_SYSTEM_FPM=true env npx electron-builder build --linux flatpak --arm64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
     --config ../../../build_scripts/electron-builder.json
-  USE_SYSTEM_FPM=true env DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --arm64 \
+  USE_SYSTEM_FPM=true env npx electron-builder build --linux flatpak --arm64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
     --config ../../../build_scripts/electron-builder.json
@@ -98,11 +98,11 @@ else
   sudo flatpak install -y --noninteractive flathub org.electronjs.Electron2.BaseApp//23.08
   sudo flatpak install -y --noninteractive flathub org.freedesktop.Sdk//23.08
   sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//23.08
-  echo DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --x64 \
+  echo npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
     --config ../../../build_scripts/electron-builder.json
-  DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --x64 \
+  npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
     --config ../../../build_scripts/electron-builder.json
