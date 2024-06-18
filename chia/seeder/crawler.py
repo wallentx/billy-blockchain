@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import logging
 import time
@@ -8,7 +9,20 @@ import traceback
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, ClassVar, Dict, List, Optional, Set, Tuple, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    ClassVar,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    cast,
+)
 
 import aiosqlite
 
@@ -23,6 +37,7 @@ from chia.server.outbound_message import NodeType
 from chia.server.server import ChiaServer
 from chia.server.ws_connection import WSChiaConnection
 from chia.types.peer_info import PeerInfo
+from chia.util.chia_version import chia_short_version
 from chia.util.ints import uint32, uint64
 from chia.util.network import resolve
 from chia.util.path import path_from_root
@@ -67,6 +82,32 @@ class Crawler:
 
         return self._server
 
+    @contextlib.asynccontextmanager
+    async def manage(self) -> AsyncIterator[None]:
+        # We override the default peer_connect_timeout when running from the crawler
+        crawler_peer_timeout = self.config.get("peer_connect_timeout", 2)
+        self.server.config["peer_connect_timeout"] = crawler_peer_timeout
+
+        # Connect to the DB
+        self.crawl_store: CrawlStore = await CrawlStore.create(await aiosqlite.connect(self.db_path))
+        # Bootstrap the initial peers
+        await self.load_bootstrap_peers()
+        self.crawl_task = asyncio.create_task(self.crawl())
+        try:
+            yield
+        finally:
+            self._shut_down = True
+
+            if self.crawl_task is not None:
+                try:
+                    await asyncio.wait_for(self.crawl_task, timeout=10)  # wait 10 seconds before giving up
+                except asyncio.TimeoutError:
+                    self.log.error("Crawl task did not exit in time, killing task.")
+                    self.crawl_task.cancel()
+            if self.crawl_store is not None:
+                self.log.info("Closing connection to DB.")
+                await self.crawl_store.crawl_db.close()
+
     def __post_init__(self) -> None:
         # get db path
         crawler_db_path: str = self.config.get("crawler_db_path", "crawler.db")
@@ -100,7 +141,7 @@ class Crawler:
 
         async def peer_action(peer: WSChiaConnection) -> None:
             peer_info = peer.get_peer_info()
-            version = peer.get_version()
+            version = chia_short_version(peer.get_version())
             if peer_info is not None and version is not None:
                 self.version_cache.append((peer_info.host, version))
             # Ask peer for peers
@@ -133,17 +174,6 @@ class Crawler:
         except Exception as e:
             self.log.warning(f"Exception: {e}. Traceback: {traceback.format_exc()}.")
             await self.crawl_store.peer_failed_to_connect(peer)
-
-    async def _start(self) -> None:
-        # We override the default peer_connect_timeout when running from the crawler
-        crawler_peer_timeout = self.config.get("peer_connect_timeout", 2)
-        self.server.config["peer_connect_timeout"] = crawler_peer_timeout
-
-        # Connect to the DB
-        self.crawl_store: CrawlStore = await CrawlStore.create(await aiosqlite.connect(self.db_path))
-        # Bootstrap the initial peers
-        await self.load_bootstrap_peers()
-        self.crawl_task = asyncio.create_task(self.crawl())
 
     async def load_bootstrap_peers(self) -> None:
         assert self.crawl_store is not None
@@ -325,20 +355,6 @@ class Crawler:
 
     async def on_connect(self, connection: WSChiaConnection) -> None:
         pass
-
-    def _close(self) -> None:
-        self._shut_down = True
-
-    async def _await_closed(self) -> None:
-        if self.crawl_task is not None:
-            try:
-                await asyncio.wait_for(self.crawl_task, timeout=10)  # wait 10 seconds before giving up
-            except asyncio.TimeoutError:
-                self.log.error("Crawl task did not exit in time, killing task.")
-                self.crawl_task.cancel()
-        if self.crawl_store is not None:
-            self.log.info("Closing connection to DB.")
-            await self.crawl_store.crawl_db.close()
 
     async def print_summary(self, t_start: float, total_nodes: int, tried_nodes: Set[str]) -> None:
         assert self.crawl_store is not None  # this is only ever called from the crawl task
