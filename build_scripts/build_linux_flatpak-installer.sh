@@ -52,8 +52,8 @@ pwd
 bash ./build_license_directory.sh > /dev/null
 
 ls -la dist/
-cp -r dist/daemon ../chia-blockchain-gui/packages/gui
-cp -r dist ../chia-blockchain-gui-packages/gui
+#cp -r dist/daemon ../chia-blockchain-gui/packages/gui
+cp -r dist ../chia-blockchain-gui/packages/gui
 
 # Change to the gui package
 cd ../chia-blockchain-gui/packages/gui || exit 1
