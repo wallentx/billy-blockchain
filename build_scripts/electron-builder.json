@@ -98,5 +98,10 @@
       "--rpm-tag=Requires(pre): findutils",
       "--before-install=../../../build_scripts/assets/rpm/before-install.sh"
     ]
+  },
+  "flatpak": {
+    "runtime": "org.freedesktop.platform",
+    "runtimeVersion": "23.08",
+    "baseVersion": "23.08"
   }
 }
