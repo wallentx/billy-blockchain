@@ -52,11 +52,13 @@ pwd
 bash ./build_license_directory.sh > /dev/null
 
 ls -la dist/
-#cp -r dist/daemon ../chia-blockchain-gui/packages/gui
-cp -r dist ../chia-blockchain-gui/packages/gui
+cp -r dist/daemon ../chia-blockchain-gui/packages/gui
+# cp -r dist ../chia-blockchain-gui/packages/gui
 
 # Change to the gui package
 cd ../chia-blockchain-gui/packages/gui || exit 1
+
+ls -la
 
 # sets the version for chia-blockchain in package.json
 cp package.json package.json.orig
@@ -83,10 +85,12 @@ if [ "$PLATFORM" = "arm64" ]; then
   sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//23.08
   echo USE_SYSTEM_FPM=true env DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --arm64 \
     --config.linux.desktop.Name="Chia Blockchain" \
-    --config.artifactName="chia-blockchain"
+    --config.artifactName="chia-blockchain" \
+    --config ../../../build_scripts/electron-builder.json
   USE_SYSTEM_FPM=true env DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --arm64 \
     --config.linux.desktop.Name="Chia Blockchain" \
-    --config.artifactName="chia-blockchain"
+    --config.artifactName="chia-blockchain" \
+    --config ../../../build_scripts/electron-builder.json
   LAST_EXIT_CODE=$?
 else
   sudo apt -y install flatpak flatpak-builder
@@ -96,10 +100,12 @@ else
   sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//23.08
   echo DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
-    --config.artifactName="chia-blockchain"
+    --config.artifactName="chia-blockchain" \
+    --config ../../../build_scripts/electron-builder.json
   DEBUG="@malept/flatpak-bundler" npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
-    --config.artifactName="chia-blockchain"
+    --config.artifactName="chia-blockchain" \
+    --config ../../../build_scripts/electron-builder.json
   LAST_EXIT_CODE=$?
 fi
 ls -l dist/linux*-unpacked/resources
