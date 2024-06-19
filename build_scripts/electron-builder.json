@@ -101,7 +101,7 @@
   },
   "flatpak": {
     "runtime": "org.freedesktop.platform",
-    "runtimeVersion": "23.08",
-    "baseVersion": "23.08"
+    "runtimeVersion": "22.08",
+    "baseVersion": "22.08"
   }
 }

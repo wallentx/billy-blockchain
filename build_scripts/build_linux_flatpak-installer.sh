@@ -34,7 +34,7 @@ cd .. || exit 1
 ls -la
 
 echo "Create dist/"
-#rm -rf dist
+rm -rf dist
 mkdir -p dist
 
 echo "Create executables with pyinstaller"
@@ -59,14 +59,17 @@ cp -r dist/daemon ../chia-blockchain-gui/packages/gui
 cd ../chia-blockchain-gui/packages/gui || exit 1
 
 ls -la
-npm install electron-builder@latest inflight@latest glob@latest
+#npm install electron-builder@latest inflight@latest glob@latest
 
 # sets the version for chia-blockchain in package.json
 cp package.json package.json.orig
 jq --arg VER "$CHIA_INSTALLER_VERSION" '.version=$VER' package.json >temp.json && mv temp.json package.json
 
+cat package.json
+
 echo "Building Linux Flatpak Electron app"
 PRODUCT_NAME="chia"
+set -x
 if [ "$PLATFORM" = "arm64" ]; then
   # electron-builder does not work for arm64 as of Aug 16, 2022.
   # This is a temporary fix.
@@ -81,9 +84,9 @@ if [ "$PLATFORM" = "arm64" ]; then
   sudo gem install fpm
   sudo apt -y install flatpak flatpak-builder
   sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-  sudo flatpak install -y --noninteractive flathub org.electronjs.Electron2.BaseApp//23.08
-  sudo flatpak install -y --noninteractive flathub org.freedesktop.Sdk//23.08
-  sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//23.08
+  sudo flatpak install -y --noninteractive flathub org.electronjs.Electron2.BaseApp//22.08
+  sudo flatpak install -y --noninteractive flathub org.freedesktop.Sdk//22.08
+  sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//22.08
   echo USE_SYSTEM_FPM=true env npx electron-builder build --linux flatpak --arm64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
@@ -96,9 +99,9 @@ if [ "$PLATFORM" = "arm64" ]; then
 else
   sudo apt -y install flatpak flatpak-builder
   sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-  sudo flatpak install -y --noninteractive flathub org.electronjs.Electron2.BaseApp//23.08
-  sudo flatpak install -y --noninteractive flathub org.freedesktop.Sdk//23.08
-  sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//23.08
+  sudo flatpak install -y --noninteractive flathub org.electronjs.Electron2.BaseApp//22.08
+  sudo flatpak install -y --noninteractive flathub org.freedesktop.Sdk//22.08
+  sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//22.08
   echo npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
@@ -109,6 +112,7 @@ else
     --config ../../../build_scripts/electron-builder.json
   LAST_EXIT_CODE=$?
 fi
+set +x
 ls -l dist/linux*-unpacked/resources
 
 if [ "$LAST_EXIT_CODE" -ne 0 ]; then
