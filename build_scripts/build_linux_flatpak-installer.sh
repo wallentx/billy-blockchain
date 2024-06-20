@@ -106,7 +106,7 @@ else
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
     --config ../../../build_scripts/electron-builder.json
-  npx electron-builder build --linux flatpak --x64 \
+  DEBUG=flatpak-bundler npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
     --config ../../../build_scripts/electron-builder.json
