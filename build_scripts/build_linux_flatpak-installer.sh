@@ -105,11 +105,13 @@ else
   echo npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
-    --config ../../../build_scripts/electron-builder.json
+    --config ../../../build_scripts/electron-builder.json \
+    --log-level=debug
   npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
-    --config ../../../build_scripts/electron-builder.json
+    --config ../../../build_scripts/electron-builder.json \
+    --log-level=debug
   LAST_EXIT_CODE=$?
 fi
 set +x
