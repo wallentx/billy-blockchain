@@ -66,7 +66,7 @@ cp package.json package.json.orig
 jq --arg VER "$CHIA_INSTALLER_VERSION" '.version=$VER' package.json >temp.json && mv temp.json package.json
 
 cat package.json
-
+npm install glob@latest
 echo "Building Linux Flatpak Electron app"
 PRODUCT_NAME="chia"
 set -x
@@ -105,13 +105,11 @@ else
   echo npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
-    --config ../../../build_scripts/electron-builder.json \
-    --log-level=debug
+    --config ../../../build_scripts/electron-builder.json
   npx electron-builder build --linux flatpak --x64 \
     --config.linux.desktop.Name="Chia Blockchain" \
     --config.artifactName="chia-blockchain" \
-    --config ../../../build_scripts/electron-builder.json \
-    --log-level=debug
+    --config ../../../build_scripts/electron-builder.json
   LAST_EXIT_CODE=$?
 fi
 set +x
