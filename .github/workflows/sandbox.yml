@@ -30,6 +30,8 @@ jobs:
         python-version: [3.8]
 
     steps:
+      - name: Checkout Test
+        uses: actions/checkout
       - name: Install Things
         run: |
           packagesNeeded='curl jq'
