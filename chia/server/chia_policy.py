@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 
         def _attach(self) -> None: ...
 
-        def _detach(self) -> None: ...
+        def _detach(self, transport) -> None: ...
 
         def _start_serving(self) -> None: ...
 
@@ -131,15 +131,18 @@ class PausableServer(BaseEventsServer):
         self.max_concurrent_connections = (
             max_concurrent_connections if max_concurrent_connections is not None else global_max_concurrent_connections
         )
+        self._active_count = 0
 
     def _attach(self) -> None:
         super()._attach()
+        self._active_count += 1
         logging.getLogger(__name__).debug(f"New connection. Total connections: {self._active_count}")
         if not self._paused and self._active_count >= self.max_concurrent_connections:
             self._chia_pause()
 
-    def _detach(self) -> None:
-        super()._detach()
+    def _detach(self, transport) -> None:  # Accept the `transport` argument
+        super()._detach(transport)  # Pass the `transport` argument to the parent method
+        self._active_count -= 1
         logging.getLogger(__name__).debug(f"Connection lost. Total connections: {self._active_count}")
         if (
             self._active_count > 0
