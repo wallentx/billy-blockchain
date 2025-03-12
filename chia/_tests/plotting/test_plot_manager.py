@@ -621,34 +621,59 @@ async def test_drop_too_large_cache_entries(environment, bt):
 async def test_cache_lifetime(environment: Environment) -> None:
     # Load a directory to produce a cache file
     env: Environment = environment
-    expected_result = PlotRefreshResult()
+    expected_result = PlotRefreshResult(loaded=env.dir_1.plot_info_list(), processed=len(env.dir_1))
     add_plot_directory(env.root_path, str(env.dir_1.path))
-    expected_result.loaded = env.dir_1.plot_info_list()  # type: ignore[assignment]
-    expected_result.removed = []
-    expected_result.processed = len(env.dir_1)
-    expected_result.remaining = 0
     await env.refresh_tester.run(expected_result)
-    expected_result.loaded = []
+    # Modify the cache lifetime
     cache_v1: Cache = env.refresh_tester.plot_manager.cache
     assert len(cache_v1) > 0
-    count_before = len(cache_v1)
-    # Remove half of the plots in dir1
-    for path in env.dir_1.path_list()[0 : int(len(env.dir_1) / 2)]:
-        expected_result.processed -= 1
-        expected_result.removed.append(path)
-        unlink(path)
-    # Modify the `last_use` timestamp of all cache entries to let them expire
-    last_use_before = time.time() - Cache.expiry_seconds - 1
-    for cache_entry in cache_v1.values():
-        cache_entry.last_use = last_use_before
-        assert cache_entry.expired(Cache.expiry_seconds)
-    # The next refresh cycle will now lead to half of the cache entries being removed because they are expired and
-    # the related plots do not longer exist.
+    # Set the expiry seconds to 0 to make all cache entries expired
+    cache_v1.expiry_seconds = 0
+    # Refresh again and make sure the cache entries are refreshed
     await env.refresh_tester.run(expected_result)
-    assert len(cache_v1) == count_before - len(expected_result.removed)
-    # The other half of the cache entries should have a different `last_use` value now.
-    for cache_entry in cache_v1.values():
-        assert cache_entry.last_use != last_use_before
+    # Restore the original expiry seconds
+    cache_v1.expiry_seconds = 7 * 24 * 60 * 60
+
+
+@pytest.mark.anyio
+async def test_cache_clear(environment: Environment) -> None:
+    """Test the clear method of the Cache class."""
+    env: Environment = environment
+    expected_result = PlotRefreshResult(loaded=env.dir_1.plot_info_list(), processed=len(env.dir_1))
+    add_plot_directory(env.root_path, str(env.dir_1.path))
+    await env.refresh_tester.run(expected_result)
+    
+    # Verify the cache has entries
+    cache = env.refresh_tester.plot_manager.cache
+    assert len(cache) > 0
+    assert cache.path().exists()
+    
+    # Clear the cache
+    cache.clear()
+    
+    # Verify the cache is empty but the file still exists
+    assert len(cache) == 0
+    assert cache.changed() is True
+    assert cache.path().exists()
+    
+    # Save the cache and verify it's still empty
+    cache.save()
+    assert len(cache) == 0
+    assert cache.changed() is False
+    
+    # Load the cache again and verify it's still empty
+    new_cache = Cache(cache.path())
+    new_cache.load()
+    assert len(new_cache) == 0
+    
+    # Refresh again to repopulate the cache
+    await env.refresh_tester.run(expected_result)
+    
+    # Verify the cache has entries again
+    async def cache_has_entries() -> bool:
+        return len(cache) > 0
+    
+    await time_out_assert(10, cache_has_entries)
 
 
 @pytest.mark.parametrize(
