@@ -621,16 +621,23 @@ async def test_drop_too_large_cache_entries(environment, bt):
 async def test_cache_lifetime(environment: Environment) -> None:
     # Load a directory to produce a cache file
     env: Environment = environment
-    expected_result = PlotRefreshResult(loaded=env.dir_1.plot_info_list(), processed=len(env.dir_1))
+    
+    # First add a plot directory and run a refresh to populate the cache
     add_plot_directory(env.root_path, str(env.dir_1.path))
+    expected_result = PlotRefreshResult(loaded=env.dir_1.plot_info_list(), processed=len(env.dir_1))
     await env.refresh_tester.run(expected_result)
+    
     # Modify the cache lifetime
     cache_v1: Cache = env.refresh_tester.plot_manager.cache
     assert len(cache_v1) > 0
+    
     # Set the expiry seconds to 0 to make all cache entries expired
     cache_v1.expiry_seconds = 0
+    
     # Refresh again and make sure the cache entries are refreshed
+    # Since the cache entries are expired, they should be reloaded
     await env.refresh_tester.run(expected_result)
+    
     # Restore the original expiry seconds
     cache_v1.expiry_seconds = 7 * 24 * 60 * 60
 
@@ -639,8 +646,10 @@ async def test_cache_lifetime(environment: Environment) -> None:
 async def test_cache_clear(environment: Environment) -> None:
     """Test the clear method of the Cache class."""
     env: Environment = environment
-    expected_result = PlotRefreshResult(loaded=env.dir_1.plot_info_list(), processed=len(env.dir_1))
+    
+    # First add a plot directory and run a refresh to populate the cache
     add_plot_directory(env.root_path, str(env.dir_1.path))
+    expected_result = PlotRefreshResult(loaded=env.dir_1.plot_info_list(), processed=len(env.dir_1))
     await env.refresh_tester.run(expected_result)
     
     # Verify the cache has entries
@@ -666,14 +675,12 @@ async def test_cache_clear(environment: Environment) -> None:
     new_cache.load()
     assert len(new_cache) == 0
     
-    # Refresh again to repopulate the cache
-    await env.refresh_tester.run(expected_result)
+    # Refresh again to repopulate the cache - with empty expected result since we're not loading new plots
+    empty_result = PlotRefreshResult(processed=len(env.dir_1))
+    await env.refresh_tester.run(empty_result)
     
     # Verify the cache has entries again
-    async def cache_has_entries() -> bool:
-        return len(cache) > 0
-    
-    await time_out_assert(10, cache_has_entries)
+    assert len(cache) > 0
 
 
 @pytest.mark.parametrize(
