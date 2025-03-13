@@ -245,21 +245,17 @@ async def refresh_plots(root_path: Path, hard: bool = False) -> None:
     """
     Refreshes the plot list, optionally clearing the cache for a full refresh
     """
+    from chia.cmds.cmds_util import get_any_service_client
     from chia.rpc.harvester_rpc_client import HarvesterRpcClient
 
     try:
-        harvester_client = await HarvesterRpcClient.create(
-            self_hostname="localhost", port=None, root_path=root_path, net_config=None
-        )
-        if hard:
-            print("Performing hard refresh (clearing cache)...")
-            await harvester_client.hard_refresh_plots()
-        else:
-            print("Refreshing plots...")
-            await harvester_client.refresh_plots()
-        print("Plot refresh initiated. Check logs for progress.")
+        async with get_any_service_client(HarvesterRpcClient, root_path, None) as (harvester_client, _):
+            if hard:
+                print("Performing hard refresh (clearing cache)...")
+                await harvester_client.hard_refresh_plots()
+            else:
+                print("Refreshing plots...")
+                await harvester_client.refresh_plots()
+            print("Plot refresh initiated. Check logs for progress.")
     except Exception as e:
         print(f"Failed to refresh plots: {e}")
-    finally:
-        harvester_client.close()
-        await harvester_client.await_closed()
