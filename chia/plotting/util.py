@@ -133,7 +133,6 @@ def get_plot_filenames(root_path: Path) -> dict[Path, list[Path]]:
             log.error(f"Error processing directory {directory}: {e}")
             all_files[directory] = []
             continue
-            
     return all_files
 
 
@@ -265,7 +264,7 @@ def get_filenames(directory: Path, recursive: bool, follow_links: bool) -> list[
                 # Fall back to manual recursive scanning if glob fails
                 try:
                     # Manually walk the directory tree to handle errors more gracefully
-                    for root, _, files in os.walk(directory, followlinks=follow_links, onerror=lambda err: log.warning(f"Error walking directory: {err}")):
+                    for root, _, files in os.walk(directory, followlinks=follow_links, onerror=lambda err: log.warning(f"Error walking directory \"{directory}\": {err}")):
                         for file in files:
                             if file.endswith(".plot") and not file.startswith("._"):
                                 try:
@@ -273,7 +272,7 @@ def get_filenames(directory: Path, recursive: bool, follow_links: bool) -> list[
                                     if filepath.is_file():
                                         all_files.append(filepath)
                                 except Exception as e:
-                                    log.warning(f"Error processing file {os.path.join(root, file)}: {e}")
+                                    log.exception(f"Error processing file {os.path.join(root, file)}")
                                     continue
                 except Exception as e:
                     log.warning(f"Error during manual directory walk of {directory}: {e}")
@@ -289,7 +288,7 @@ def get_filenames(directory: Path, recursive: bool, follow_links: bool) -> list[
                                     if filepath.is_file():
                                         all_files.append(filepath)
                                 except Exception as e:
-                                    log.warning(f"Error processing file {os.path.join(root, file)}: {e}")
+                                    log.exception(f"Error processing file {os.path.join(root, file)}")
                                     continue
                 else:
                     # Non-recursive case - just use glob
@@ -300,15 +299,15 @@ def get_filenames(directory: Path, recursive: bool, follow_links: bool) -> list[
                                 all_files.append(child)
                         except Exception as e:
                             # If we can't process a specific file, log and continue
-                            log.warning(f"Error processing file {child}: {e}")
+                            log.exception(f"Error processing file {child}")
                             continue
             except Exception as e:
-                log.warning(f"Error during directory scanning in {directory}: {e}")
+                log.exception(f"Error during directory scanning in {directory}")
                 # Continue rather than returning empty
         
         log.debug(f"get_filenames: {len(all_files)} files found in {directory}, recursive: {recursive}")
     except Exception as e:
-        log.warning(f"Error reading directory {directory}: {e}")
+        log.exception(f"Error reading directory {directory}")
         # We still return whatever files we found before the error
     
     return all_files
