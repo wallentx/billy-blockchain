@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Any, Optional, Union
+import os
 
 from chia_rs import G1Element, PrivateKey
 from chia_rs.sized_bytes import bytes32
@@ -233,19 +234,68 @@ def get_filenames(directory: Path, recursive: bool, follow_links: bool) -> list[
         if follow_links and recursive:
             import glob
 
-            files = glob.glob(str(directory / "**" / "*.plot"), recursive=True)
-            for file in files:
-                filepath = Path(file).resolve()
-                if filepath.is_file() and not filepath.name.startswith("._"):
-                    all_files.append(filepath)
+            try:
+                files = glob.glob(str(directory / "**" / "*.plot"), recursive=True)
+                for file in files:
+                    try:
+                        filepath = Path(file).resolve()
+                        if filepath.is_file() and not filepath.name.startswith("._"):
+                            all_files.append(filepath)
+                    except Exception as e:
+                        # If we can't process a specific file, log and continue
+                        log.warning(f"Error processing file {file}: {e}")
+                        continue
+            except Exception as e:
+                log.warning(f"Error during glob in directory {directory}: {e}")
+                # Fall back to manual recursive scanning if glob fails
+                try:
+                    # Manually walk the directory tree to handle errors more gracefully
+                    for root, _, files in os.walk(directory, followlinks=follow_links, onerror=lambda err: log.warning(f"Error walking directory \"{directory}\": {err}")):
+                        for file in files:
+                            if file.endswith(".plot") and not file.startswith("._"):
+                                try:
+                                    filepath = Path(os.path.join(root, file)).resolve()
+                                    if filepath.is_file():
+                                        all_files.append(filepath)
+                                except Exception as e:
+                                    log.exception(f"Error processing file {os.path.join(root, file)}")
+                                    continue
+                except Exception as e:
+                    log.warning(f"Error during manual directory walk of {directory}: {e}")
         else:
-            glob_function = directory.rglob if recursive else directory.glob
-            all_files = [
-                child for child in glob_function("*.plot") if child.is_file() and not child.name.startswith("._")
-            ]
+            try:
+                if recursive:
+                    # Use os.walk for recursive scanning to handle errors better
+                    for root, _, files in os.walk(directory, followlinks=follow_links, onerror=lambda err: log.warning(f"Error walking directory: {err}")):
+                        for file in files:
+                            if file.endswith(".plot") and not file.startswith("._"):
+                                try:
+                                    filepath = Path(os.path.join(root, file)).resolve()
+                                    if filepath.is_file():
+                                        all_files.append(filepath)
+                                except Exception as e:
+                                    log.exception(f"Error processing file {os.path.join(root, file)}")
+                                    continue
+                else:
+                    # Non-recursive case - just use glob
+                    glob_function = directory.glob
+                    for child in glob_function("*.plot"):
+                        try:
+                            if child.is_file() and not child.name.startswith("._"):
+                                all_files.append(child)
+                        except Exception as e:
+                            # If we can't process a specific file, log and continue
+                            log.exception(f"Error processing file {child}")
+                            continue
+            except Exception as e:
+                log.exception(f"Error during directory scanning in {directory}")
+                # Continue rather than returning empty
+        
         log.debug(f"get_filenames: {len(all_files)} files found in {directory}, recursive: {recursive}")
     except Exception as e:
-        log.warning(f"Error reading directory {directory} {e}")
+        log.exception(f"Error reading directory {directory}")
+        # We still return whatever files we found before the error
+    
     return all_files
 
 
