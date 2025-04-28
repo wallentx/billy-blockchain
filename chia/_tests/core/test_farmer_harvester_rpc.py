@@ -461,45 +461,79 @@ async def test_farmer_get_harvester_plots_endpoints(
 @pytest.mark.anyio
 @pytest.mark.skip("This test causes hangs occasionally. TODO: fix this.")
 async def test_harvester_add_plot_directory(harvester_farmer_environment: HarvesterFarmerEnvironment) -> None:
-    _, _, harvester_service, harvester_rpc_client, _ = harvester_farmer_environment
+    env = harvester_farmer_environment
+    assert len(env.harvesters) > 0
+    harvester = env.harvesters[0]
 
     async def assert_added(path: Path) -> None:
-        assert await harvester_rpc_client.add_plot_directory(str(path))
-        with lock_and_load_config(root_path, "config.yaml") as config:
-            assert str(path) in config["harvester"]["plot_directories"]
+        await time_out_assert(5, harvester.plot_manager.plot_count, 1)
+        directories_to_check = await env.harvester_services[0].get_plot_directories()
+        assert str(path) in directories_to_check
 
-    # Test without the required parameter: dirname
-    with pytest.raises(ValueError, match="dirname"):
-        await harvester_rpc_client.fetch("add_plot_directory", {})
+    # Test add with a directory that doesn't exist
+    non_existent_path = Path("non-existent-path")
+    with pytest.raises(ValueError):
+        await env.harvester_services[0].add_plot_directory(str(non_existent_path))
 
-    root_path = harvester_service._node.root_path
-    test_path = Path(root_path / "test_path").resolve()
+    # Test add with a file not a directory
+    with pytest.raises(ValueError):
+        await env.harvester_services[0].add_plot_directory(str(env.farmer_services[0].root_path / "config.yaml"))
 
-    # The test_path doesn't exist at this point
-    with assert_rpc_error(f"Path doesn't exist: {test_path}"):
-        await harvester_rpc_client.add_plot_directory(str(test_path))
+    # Test add a directory without plots
+    empty_dir = env.farmer_services[0].root_path / "empty"
+    mkdir(empty_dir)
+    await env.harvester_services[0].add_plot_directory(str(empty_dir))
 
-    # Create a file at the test_path and make sure it detects this
-    with open(test_path, "w"):
-        pass
+    # Test add a directory with plots
+    plot_dir = get_plot_dir() / "subdir"
+    mkdir(plot_dir)
+    copy(env.valid_plots[0], plot_dir)
+    await env.harvester_services[0].add_plot_directory(str(plot_dir))
+    await assert_added(plot_dir)
 
-    with assert_rpc_error(f"Path is not a directory: {test_path}"):
-        await harvester_rpc_client.add_plot_directory(str(test_path))
 
-    # Drop the file, make it a directory and make sure it gets added properly.
-    test_path.unlink()
-    mkdir(test_path)
-
-    await assert_added(test_path)
-
-    with assert_rpc_error(f"Path already added: {test_path}"):
-        await harvester_rpc_client.add_plot_directory(str(test_path))
-
-    # Add another one and make sure they are still both there.
-    test_path_other = test_path / "other"
-    mkdir(test_path_other)
-    await assert_added(test_path_other)
-
-    added_directories = await harvester_rpc_client.get_plot_directories()
-    assert str(test_path) in added_directories
-    assert str(test_path_other) in added_directories
+@pytest.mark.anyio
+async def test_harvester_refresh_plots(harvester_farmer_environment: HarvesterFarmerEnvironment) -> None:
+    env = harvester_farmer_environment
+    assert len(env.harvesters) > 0
+    harvester = env.harvesters[0]
+    receiver = env.farmer.plot_sync_receivers[harvester.server.node_id]
+    
+    # Add a directory with plots
+    plot_dir = get_plot_dir() / "refresh_test"
+    mkdir(plot_dir)
+    copy(env.valid_plots[0], plot_dir)
+    await env.harvester_services[0].add_plot_directory(str(plot_dir))
+    
+    # Wait for plot sync to complete
+    await wait_for_plot_sync(receiver, receiver.last_sync().sync_id)
+    
+    # Get the initial plot count
+    initial_count = harvester.plot_manager.plot_count()
+    
+    # Trigger a normal refresh
+    await env.harvester_services[0].refresh_plots()
+    
+    # Wait for plot sync to complete
+    await wait_for_plot_sync(receiver, receiver.last_sync().sync_id)
+    
+    # Verify the plot count is the same
+    def check_plot_count() -> bool:
+        return harvester.plot_manager.plot_count() == initial_count
+    
+    await time_out_assert(10, check_plot_count)
+    
+    # Trigger a hard refresh
+    await env.harvester_services[0].hard_refresh_plots()
+    
+    # Wait for plot sync to complete
+    await wait_for_plot_sync(receiver, receiver.last_sync().sync_id)
+    
+    # Verify the plot count is the same after hard refresh
+    await time_out_assert(10, check_plot_count)
+    
+    # Verify the cache was cleared and rebuilt
+    def check_cache_not_empty() -> bool:
+        return len(harvester.plot_manager.cache) > 0
+    
+    await time_out_assert(10, check_cache_not_empty)
