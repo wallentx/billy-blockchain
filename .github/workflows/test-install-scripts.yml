@@ -29,6 +29,7 @@ jobs:
       matrix:
         python:
           - major-dot-minor: "3.10"
+          - major-dot-minor: "3.13"
         os:
           - name: Linux
             emoji: 🐧
