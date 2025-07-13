@@ -29,11 +29,12 @@ jobs:
       matrix:
         python:
           - major-dot-minor: "3.10"
+          - major-dot-minor: "3.13"
         os:
           - name: Linux
             emoji: 🐧
             runs-on:
-              arm: [Linux, ARM64]
+              arm: ${{ github.repository_owner == 'Chia-Network' && '[Linux, ARM64]' || 'ubuntu-22.04-arm' }}
               intel: ubuntu-latest
             matrix: linux
           - name: macOS
@@ -69,6 +70,12 @@ jobs:
         exclude:
           - os:
               matrix: windows
+            arch:
+              matrix: arm
+          # Exclude Python 3.13 from ARM runners (ubuntu-22.04-arm for forks) 
+          # since Python 3.13 is not available on Ubuntu 22.04
+          - python:
+              major-dot-minor: "3.13"
             arch:
               matrix: arm
 
@@ -144,7 +151,7 @@ jobs:
             matrix: linux
             runs-on:
               intel: ubuntu-latest
-              arm: [linux, arm64]
+              arm: ${{ github.repository_owner == 'Chia-Network' && '[linux, arm64]' || 'ubuntu-22.04-arm' }}
         distribution:
           - name: amazonlinux:2023
             type: amazon
