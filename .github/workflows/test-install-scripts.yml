@@ -72,6 +72,12 @@ jobs:
               matrix: windows
             arch:
               matrix: arm
+          # Exclude Python 3.13 from ARM runners (ubuntu-22.04-arm for forks) 
+          # since Python 3.13 is not available on Ubuntu 22.04
+          - python:
+              major-dot-minor: "3.13"
+            arch:
+              matrix: arm
 
     steps:
       - name: Checkout Code

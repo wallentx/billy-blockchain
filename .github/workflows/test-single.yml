@@ -127,6 +127,12 @@ jobs:
               matrix: windows
             configuration:
               name: core.full_node
+          # Exclude Python 3.13 from ARM runners since it may not be available
+          # on ubuntu-22.04-arm (used for forks)
+          - arch:
+              matrix: arm
+            python:
+              matrix: "3.13"
           - python:
               exclude_from:
                 ${{ inputs.matrix_mode }}: True
