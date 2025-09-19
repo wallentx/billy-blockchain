@@ -1,36 +1,44 @@
+# YAML anchors for reusable configurations
+x-release-type-input: &release-type-input
+  release_type:
+    description: "Tagged release testing scenario"
+    required: false
+    type: choice
+    default: ""
+    options:
+      - ""
+      - 9.9.9-b1
+      - 9.9.9-rc1
+      - 9.9.9
+
+x-paths-ignore: &paths-ignore
+  - "**.md"
+
+x-main-branches: &main-branches
+  - "long_lived/**"
+  - main
+  - "release/**"
+
+x-standard-concurrency: &standard-concurrency
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
+
 name: 📦🚀 Build Installer - Windows 10
 
 on:
   workflow_dispatch:
-    inputs:
-      release_type:
-        description: "Tagged release testing scenario"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - 9.9.9-b1
-          - 9.9.9-rc1
-          - 9.9.9
+    inputs: *release-type-input
   push:
-    paths-ignore:
-      - "**.md"
-    branches:
-      - "long_lived/**"
-      - main
-      - "release/**"
+    paths-ignore: *paths-ignore
+    branches: *main-branches
   release:
     types: [published]
   pull_request:
-    paths-ignore:
-      - "**.md"
+    paths-ignore: *paths-ignore
     branches:
       - "**"
 
-concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: true
+concurrency: *standard-concurrency
 
 permissions:
   id-token: write

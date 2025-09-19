@@ -1,3 +1,8 @@
+# YAML anchors for reusable configurations
+x-standard-concurrency: &standard-concurrency
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
+
 name: 🚨 pre-commit
 
 on:
@@ -8,9 +13,7 @@ on:
       - main
       - "release/**"
 
-concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: true
+concurrency: *standard-concurrency
 
 jobs:
   pre-commit:

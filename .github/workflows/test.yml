@@ -1,9 +1,16 @@
+# YAML anchors for reusable configurations
+x-paths-ignore: &paths-ignore
+  - "**.md"
+
+x-standard-concurrency: &standard-concurrency
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
+
 name: 🧪 test
 
 on:
   push:
-    paths-ignore:
-      - "**.md"
+    paths-ignore: *paths-ignore
     branches:
       - long_lived/**
       - main
@@ -11,8 +18,7 @@ on:
     tags:
       - "**"
   pull_request:
-    paths-ignore:
-      - "**.md"
+    paths-ignore: *paths-ignore
     branches:
       - "**"
   workflow_dispatch:
@@ -73,9 +79,7 @@ on:
   schedule:
     - cron: "0 13 * * *"
 
-concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: true
+concurrency: *standard-concurrency
 
 jobs:
   configure:
