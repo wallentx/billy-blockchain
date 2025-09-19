@@ -76,7 +76,7 @@ jobs:
             apt: "3.9"
             install_sh: "3.9"
             matrix: "3.9"
-            exclude_from:
+            exclude_from: &python-exclude-limited-main
               limited: True
               main: True
           - name: "3.10"
@@ -91,9 +91,7 @@ jobs:
             apt: "3.11"
             install_sh: "3.11"
             matrix: "3.11"
-            exclude_from:
-              limited: True
-              main: True
+            exclude_from: *python-exclude-limited-main
           - name: "3.12"
             file_name: "3.12"
             # TODO: https://github.com/python/cpython/issues/128479
@@ -102,9 +100,7 @@ jobs:
             apt: "3.12"
             install_sh: "3.12"
             matrix: "3.12"
-            exclude_from:
-              limited: True
-              main: True
+            exclude_from: *python-exclude-limited-main
         exclude:
           - arch:
               matrix: arm

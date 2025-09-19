@@ -2,7 +2,7 @@ name: 🧪 test
 
 on:
   push:
-    paths-ignore:
+    paths-ignore: &paths-ignore
       - "**.md"
     branches:
       - long_lived/**
@@ -11,8 +11,7 @@ on:
     tags:
       - "**"
   pull_request:
-    paths-ignore:
-      - "**.md"
+    paths-ignore: *paths-ignore
     branches:
       - "**"
   workflow_dispatch:
@@ -73,7 +72,7 @@ on:
   schedule:
     - cron: "0 13 * * *"
 
-concurrency:
+concurrency: &standard-concurrency
   group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: true
 
