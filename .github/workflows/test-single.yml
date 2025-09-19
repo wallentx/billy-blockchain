@@ -1,8 +1,3 @@
-# YAML anchors for reusable configurations
-x-python-exclude-limited-main: &python-exclude-limited-main
-  limited: True
-  main: True
-
 name: test
 
 # This reusable workflow structure was chosen for the sole purpose of working around
@@ -81,7 +76,9 @@ jobs:
             apt: "3.9"
             install_sh: "3.9"
             matrix: "3.9"
-            exclude_from: *python-exclude-limited-main
+            exclude_from: &python-exclude-limited-main
+              limited: True
+              main: True
           - name: "3.10"
             file_name: "3.10"
             action: "3.10"

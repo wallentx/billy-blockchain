@@ -1,36 +1,25 @@
-# YAML anchors for reusable configurations
-x-release-type-input: &release-type-input
-  release_type:
-    description: "Tagged release testing scenario"
-    required: false
-    type: choice
-    default: ""
-    options:
-      - ""
-      - 9.9.9-b1
-      - 9.9.9-rc1
-      - 9.9.9
-
-x-paths-ignore: &paths-ignore
-  - "**.md"
-
-x-main-branches: &main-branches
-  - "long_lived/**"
-  - main
-  - "release/**"
-
-x-standard-concurrency: &standard-concurrency
-  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: true
-
 name: 📦🚀 Build Installer - Linux RPM AMD64
 
 on:
   workflow_dispatch:
-    inputs: *release-type-input
+    inputs: &release-type-input
+      release_type:
+        description: "Tagged release testing scenario"
+        required: false
+        type: choice
+        default: ""
+        options:
+          - ""
+          - 9.9.9-b1
+          - 9.9.9-rc1
+          - 9.9.9
   push:
-    paths-ignore: *paths-ignore
-    branches: *main-branches
+    paths-ignore: &paths-ignore
+      - "**.md"
+    branches: &main-branches
+      - "long_lived/**"
+      - main
+      - "release/**"
   release:
     types: [published]
   pull_request:
@@ -38,7 +27,9 @@ on:
     branches:
       - "**"
 
-concurrency: *standard-concurrency
+concurrency: &standard-concurrency
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   id-token: write
