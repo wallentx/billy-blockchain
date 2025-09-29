@@ -2,7 +2,7 @@ name: 📦🚀 Build Installers - MacOS
 
 on:
   workflow_dispatch:
-    inputs:
+    inputs: &release-type-input
       release_type:
         description: "Tagged release testing scenario"
         required: false
@@ -14,21 +14,20 @@ on:
           - 9.9.9-rc1
           - 9.9.9
   push:
-    paths-ignore:
+    paths-ignore: &paths-ignore
       - "**.md"
-    branches:
+    branches: &main-branches
       - "long_lived/**"
       - main
       - "release/**"
   release:
     types: [published]
   pull_request:
-    paths-ignore:
-      - "**.md"
+    paths-ignore: *paths-ignore
     branches:
       - "**"
 
-concurrency:
+concurrency: &standard-concurrency
   group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: true
 
