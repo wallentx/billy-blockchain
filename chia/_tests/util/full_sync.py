@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import cast
 
 import aiosqlite
-import zstd
+try:
+    import zstd
+except ImportError:
+    import compression.zstd as zstd
 from chia_rs import FullBlock
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint16

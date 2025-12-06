@@ -12,7 +12,10 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-import zstd
+try:
+    import zstd
+except ImportError:
+    import compression.zstd as zstd
 
 from chia.util.config import load_config, lock_and_load_config, save_config
 from chia.util.db_wrapper import get_host_parameter_limit

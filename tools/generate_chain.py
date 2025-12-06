@@ -10,7 +10,10 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 import click
-import zstd
+try:
+    import zstd
+except ImportError:
+    import compression.zstd as zstd
 from chia_rs import SpendBundle
 from chia_rs.sized_ints import uint32, uint64
 

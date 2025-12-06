@@ -11,7 +11,10 @@ from time import time
 from typing import cast
 
 import click
-import zstd
+try:
+    import zstd
+except ImportError:
+    import compression.zstd as zstd
 from chia_rs import (
     DONT_VALIDATE_SIGNATURE,
     MEMPOOL_MODE,

@@ -94,7 +94,6 @@ def rand_full_block() -> FullBlock:
         rand_g2(),
         rand_vdf(),
         rand_vdf(),
-        None,
         True,
     )
 

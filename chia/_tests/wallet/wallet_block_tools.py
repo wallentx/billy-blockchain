@@ -187,7 +187,6 @@ def finish_block(
             G2Element(),
             DEFAULT_VDF_INFO,
             DEFAULT_VDF_INFO,
-            None,  # header_mmr_root
             prev_block is not None,
         ),
         DEFAULT_VDF_PROOF,

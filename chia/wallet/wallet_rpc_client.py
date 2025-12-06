@@ -7,6 +7,7 @@ from chia_rs.sized_ints import uint32, uint64
 
 from chia.data_layer.data_layer_util import DLProof, VerifyProofResponse
 from chia.rpc.rpc_client import RpcClient
+from chia.types.blockchain_format.coin import Coin
 from chia.wallet.conditions import Condition, ConditionValidTimes, conditions_to_json_dicts
 from chia.wallet.puzzles.clawback.metadata import AutoClaimSettings
 from chia.wallet.transaction_record import TransactionRecord
@@ -42,7 +43,6 @@ from chia.wallet.wallet_request_types import (
     CreateNewDLResponse,
     CreateOfferForIDs,
     CreateOfferForIDsResponse,
-    CreateSignedTransaction,
     CreateSignedTransactionsResponse,
     DeleteKey,
     DeleteNotifications,
@@ -183,7 +183,6 @@ from chia.wallet.wallet_request_types import (
     SendNotification,
     SendNotificationResponse,
     SendTransaction,
-    SendTransactionMulti,
     SendTransactionMultiResponse,
     SendTransactionResponse,
     SetWalletResyncOnStartup,
@@ -340,17 +339,33 @@ class WalletRpcClient(RpcClient):
 
     async def send_transaction_multi(
         self,
-        request: SendTransactionMulti,
+        wallet_id: int,
+        additions: list[dict[str, Any]],
         tx_config: TXConfig,
-        extra_conditions: tuple[Condition, ...] = tuple(),
+        coins: list[Coin] | None = None,
+        fee: uint64 = uint64(0),
+        push: bool = True,
         timelock_info: ConditionValidTimes = ConditionValidTimes(),
     ) -> SendTransactionMultiResponse:
-        return SendTransactionMultiResponse.from_json_dict(
-            await self.fetch(
-                "send_transaction_multi",
-                request.json_serialize_for_transport(tx_config, extra_conditions, timelock_info),
-            )
-        )
+        # Converts bytes to hex for puzzle hashes
+        additions_hex = []
+        for ad in additions:
+            additions_hex.append({"amount": ad["amount"], "puzzle_hash": ad["puzzle_hash"].hex()})
+            if "memos" in ad:
+                additions_hex[-1]["memos"] = ad["memos"]
+        request = {
+            "wallet_id": wallet_id,
+            "additions": additions_hex,
+            "fee": fee,
+            "push": push,
+            **tx_config.to_json_dict(),
+            **timelock_info.to_json_dict(),
+        }
+        if coins is not None and len(coins) > 0:
+            coins_json = [c.to_json_dict() for c in coins]
+            request["coins"] = coins_json
+        response = await self.fetch("send_transaction_multi", request)
+        return json_deserialize_with_clvm_streamable(response, SendTransactionMultiResponse)
 
     async def spend_clawback_coins(
         self,
@@ -381,17 +396,40 @@ class WalletRpcClient(RpcClient):
 
     async def create_signed_transactions(
         self,
-        request: CreateSignedTransaction,
+        additions: list[dict[str, Any]],
         tx_config: TXConfig,
+        coins: list[Coin] | None = None,
+        fee: uint64 = uint64(0),
+        wallet_id: int | None = None,
         extra_conditions: tuple[Condition, ...] = tuple(),
         timelock_info: ConditionValidTimes = ConditionValidTimes(),
+        push: bool = False,
     ) -> CreateSignedTransactionsResponse:
-        return CreateSignedTransactionsResponse.from_json_dict(
-            await self.fetch(
-                "create_signed_transaction",
-                request.json_serialize_for_transport(tx_config, extra_conditions, timelock_info),
-            )
-        )
+        # Converts bytes to hex for puzzle hashes
+        additions_hex = []
+        for ad in additions:
+            additions_hex.append({"amount": ad["amount"], "puzzle_hash": ad["puzzle_hash"].hex()})
+            if "memos" in ad:
+                additions_hex[-1]["memos"] = ad["memos"]
+
+        request = {
+            "additions": additions_hex,
+            "fee": fee,
+            "extra_conditions": conditions_to_json_dicts(extra_conditions),
+            "push": push,
+            **tx_config.to_json_dict(),
+            **timelock_info.to_json_dict(),
+        }
+
+        if coins is not None and len(coins) > 0:
+            coins_json = [c.to_json_dict() for c in coins]
+            request["coins"] = coins_json
+
+        if wallet_id:
+            request["wallet_id"] = wallet_id
+
+        response = await self.fetch("create_signed_transaction", request)
+        return json_deserialize_with_clvm_streamable(response, CreateSignedTransactionsResponse)
 
     async def select_coins(self, request: SelectCoins) -> SelectCoinsResponse:
         return SelectCoinsResponse.from_json_dict(await self.fetch("select_coins", request.to_json_dict()))
