@@ -8,7 +8,10 @@ from pathlib import Path
 
 import aiosqlite
 import click
-import zstd
+try:
+    import zstd
+except ImportError:
+    import compression.zstd as zstd
 from chia_rs import FullBlock
 
 from chia._tests.util.full_sync import FakePeer, FakeServer, run_sync_test

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-import zstd
+try:
+    import zstd
+except ImportError:
+    import compression.zstd as zstd
 from chia_rs import FullBlock
 
 LARGE_BLOCK: FullBlock = FullBlock.from_bytes_unchecked(

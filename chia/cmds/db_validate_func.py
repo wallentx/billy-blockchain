@@ -35,7 +35,10 @@ def validate_v2(in_path: Path, *, config: dict[str, Any], validate_blocks: bool)
     import sqlite3
     from contextlib import closing
 
-    import zstd
+    try:
+        import zstd
+    except ImportError:
+        import compression.zstd as zstd
 
     if not in_path.exists():
         print(f"input file doesn't exist. {in_path}")

@@ -7,7 +7,10 @@ from contextlib import AbstractAsyncContextManager
 
 import aiosqlite
 import typing_extensions
-import zstd
+try:
+    import zstd
+except ImportError:
+    import compression.zstd as zstd
 from chia_rs import BlockRecord, FullBlock, SubEpochChallengeSegment, SubEpochSegments
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint32

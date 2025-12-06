@@ -17,7 +17,10 @@ from typing import Any, BinaryIO
 import aiosqlite
 import anyio.to_thread
 import chia_rs.datalayer
-import zstd
+try:
+    import zstd
+except ImportError:
+    import compression.zstd as zstd
 from chia_rs.datalayer import (
     DeltaFileCache,
     DeltaReader,
