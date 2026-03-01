@@ -143,6 +143,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Test Systemd
+        if: matrix.os.matrix == 'ubuntu'
+        run: |
+          echo "=== Testing Systemd capability ==="
+          systemctl --user list-unit-files --no-page -t service -a
+          echo "=== Testing journald capability ==="
+          journalctl --user -n 100 --no-hostname --no-pager --output=cat
+
       - name: Setup Python environment
         uses: Chia-Network/actions/setup-python@main
         with:
