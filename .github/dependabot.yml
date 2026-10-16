@@ -10,7 +10,7 @@ updates:
       day: "tuesday"
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0 
     rebase-strategy: auto
     labels:
       - dependencies
@@ -29,7 +29,7 @@ updates:
       day: "tuesday"
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 30
+    open-pull-requests-limit: 0 
     rebase-strategy: auto
     labels:
       - dependencies
@@ -44,7 +44,7 @@ updates:
       day: "tuesday"
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0 
     rebase-strategy: auto
     labels:
       - dependencies
@@ -59,7 +59,7 @@ updates:
       day: "tuesday"
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0 
     rebase-strategy: auto
     labels:
       - dependencies
@@ -74,7 +74,7 @@ updates:
       day: "tuesday"
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0 
     rebase-strategy: auto
     labels:
       - dependencies
@@ -88,5 +88,5 @@ updates:
       day: "tuesday"
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0 
     rebase-strategy: auto
