@@ -108,5 +108,10 @@
       "--rpm-compression=xz",
       "--rpm-compression-level=9"
     ]
+  },
+  "flatpak": {
+    "runtime": "org.freedesktop.platform",
+    "runtimeVersion": "22.08",
+    "baseVersion": "22.08"
   }
 }
